@@ -1,0 +1,41 @@
+# Ollama configuration for a 16 GB fanless M4 Air (PLAN.md §4 Phase 0.2).
+#   source ./env.sh
+#
+# These must be set for the SERVER process, not the client. If Ollama is already
+# running, restart it after sourcing, or the settings are ignored:
+#   pkill ollama && ollama serve
+
+# Keep the 12B resident. Reloading 7.6 GB between phases dominates wall clock.
+export OLLAMA_KEEP_ALIVE=-1
+
+# Exactly two: gemma4:12b (7.6 GB) + embeddinggemma (~0.3 GB) = ~7.9 GB.
+#
+# WARNING: this cap does NOT protect the memory budget. `gemma4:e4b` is 9.6 GB;
+# if anything requests it, Ollama will happily load it ALONGSIDE the 12B and
+# push a 16 GB machine into swap. The only real protection is never requesting
+# it. Consider `ollama rm gemma4:e4b`.
+export OLLAMA_MAX_LOADED_MODELS=2
+
+# Flash attention is a prerequisite for KV cache quantization below.
+export OLLAMA_FLASH_ATTENTION=1
+
+# q8_0 KV cache: roughly halves cache memory versus f16. Gemma uses sliding-window
+# attention and support has historically been uneven — Phase 0 verification #3
+# confirms this actually engages rather than silently no-opping. If it does not,
+# the <=3 GB cache budget in PLAN.md's constraint table is wrong.
+export OLLAMA_KV_CACHE_TYPE=q8_0
+
+# --- harness ---------------------------------------------------------------
+export NANOLOOP_BACKEND=ollama          # ollama | litert
+export NANOLOOP_STRUCTURED_MODE=openai  # /v1 only; native /api/chat uses `format`
+# Reasoning OFF. Gemma 4 is a reasoning model and leaving it on measured 8x
+# slower (222s vs 27s on the same prompt). Only /api/chat honours this.
+export NANOLOOP_THINK=0
+export NANOLOOP_CALLLOG=./calls.jsonl
+export NANOLOOP_N_CANDIDATES=2          # PLAN.md D7 — do not raise to fix quality
+export NANOLOOP_FUZZY=0                 # measure EXACT anchor-hit first (Phase 2)
+
+echo "ollama: keep_alive=$OLLAMA_KEEP_ALIVE max_loaded=$OLLAMA_MAX_LOADED_MODELS \
+flash_attn=$OLLAMA_FLASH_ATTENTION kv=$OLLAMA_KV_CACHE_TYPE"
+echo "harness: backend=$NANOLOOP_BACKEND structured=$NANOLOOP_STRUCTURED_MODE \
+n_candidates=$NANOLOOP_N_CANDIDATES fuzzy=$NANOLOOP_FUZZY"

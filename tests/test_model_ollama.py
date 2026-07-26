@@ -1,0 +1,119 @@
+"""Pins the two runtime facts that each cost real wall clock (PLAN.md §4 Phase 0).
+
+1. num_ctx must reach the server. On the OpenAI path it belongs in top-level
+   extra_body — inside model_kwargs LangChain drops it and Ollama then truncates
+   history silently, which in an agent loop reads as the model forgetting.
+2. Reasoning must be OFF. Gemma 4 is a reasoning model; measured, leaving it on
+   costs 8x wall clock (222s vs 27s on the same prompt).
+"""
+
+from __future__ import annotations
+
+from nanoloop import model_ollama
+
+# --- reasoning: the 8x finding ----------------------------------------------
+
+
+def test_reasoning_is_off_by_default():
+    """Measured: /api/chat think:false = 26.8s, vs 222.3s with reasoning on."""
+    assert model_ollama.THINK is False
+
+
+def test_native_body_carries_think_flag():
+    body = model_ollama.build_native_body("m", "sys", "usr", 8192, 0.0, None)
+    assert body["think"] is False
+    assert body["stream"] is False
+
+
+def test_native_body_puts_num_ctx_in_options():
+    body = model_ollama.build_native_body("m", "sys", "usr", 4096, 0.2, None)
+    assert body["options"]["num_ctx"] == 4096
+    assert body["options"]["temperature"] == 0.2
+
+
+def test_native_body_uses_the_format_field_for_schema():
+    """PLAN.md §4 specifies `format = schema_of(...)` — native, and correct here."""
+    schema = {"type": "object"}
+    body = model_ollama.build_native_body("m", "s", "u", 2048, 0.0, schema)
+    assert body["format"] == schema
+    assert "response_format" not in body
+
+
+def test_native_body_omits_format_when_no_schema():
+    assert "format" not in model_ollama.build_native_body("m", "s", "u", 2048, 0.0, None)
+
+
+# --- the OpenAI transport (LiteRT-LM) ---------------------------------------
+
+
+def test_extra_body_carries_num_ctx_both_places():
+    body = model_ollama.build_extra_body(8192)
+    assert body["num_ctx"] == 8192
+    assert body["options"]["num_ctx"] == 8192
+
+
+def test_openai_structured_mode_uses_response_format(monkeypatch):
+    """`format` is silently ignored on /v1; response_format is the equivalent."""
+    monkeypatch.setattr(model_ollama, "STRUCTURED_MODE", "openai")
+    body = model_ollama.build_extra_body(2048, {"type": "object"})
+    assert body["response_format"]["type"] == "json_schema"
+    assert "format" not in body
+
+
+def test_native_structured_mode_uses_format(monkeypatch):
+    monkeypatch.setattr(model_ollama, "STRUCTURED_MODE", "native")
+    body = model_ollama.build_extra_body(2048, {"type": "object"})
+    assert body["format"] == {"type": "object"}
+
+
+def test_no_schema_means_no_format_key():
+    assert "format" not in model_ollama.build_extra_body(2048)
+
+
+# --- transport selection -----------------------------------------------------
+
+
+def test_ollama_defaults_to_the_native_transport():
+    assert model_ollama.BACKEND == "ollama"
+    assert model_ollama.BACKENDS["ollama"][0].endswith(":11434")
+
+
+def test_litert_backend_is_configured():
+    assert model_ollama.BACKENDS["litert"][1] == "gemma4-12b,gpu"
+    assert model_ollama.BACKENDS["litert"][0].endswith(":9379")
+
+
+# --- empty content must raise, not return "" ---------------------------------
+
+
+def test_empty_content_raises_with_a_diagnostic(monkeypatch):
+    """Empty content + reasoning is the documented failure. It must not look
+    like a successful empty answer."""
+
+    def fake(system, user, num_ctx, temperature, schema):
+        return "", {"input_tokens": 10, "output_tokens": 3562}, "x" * 6249
+
+    monkeypatch.setattr(model_ollama, "_call_native", fake)
+    monkeypatch.setattr(model_ollama, "BACKEND", "ollama")
+    try:
+        model_ollama.chat("s", "u", phase="build")
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as e:
+        assert "empty content" in str(e)
+        assert "6249" in str(e)
+
+
+def test_successful_call_returns_content(monkeypatch, tmp_path):
+    from nanoloop import calllog
+
+    monkeypatch.setattr(calllog, "LOG_PATH", tmp_path / "c.jsonl")
+    monkeypatch.setattr(
+        model_ollama,
+        "_call_native",
+        lambda *a: ('{"ok": 1}', {"input_tokens": 5, "output_tokens": 7}, ""),
+    )
+    monkeypatch.setattr(model_ollama, "BACKEND", "ollama")
+    assert model_ollama.chat("s", "u", phase="build") == '{"ok": 1}'
+    rows = calllog.read(tmp_path / "c.jsonl")
+    assert rows[0]["thinking_chars"] == 0
+    assert rows[0]["prompt_tokens"] == 5

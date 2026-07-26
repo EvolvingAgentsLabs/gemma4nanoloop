@@ -1,0 +1,16 @@
+gemma4nanoloop
+Copyright 2026 the gemma4nanoloop contributors
+
+This product includes software developed as part of nanoLoop
+(https://github.com/ismaelfaro/nanoLoop), Copyright Ismael Faro,
+licensed under the Apache License, Version 2.0.
+
+Retained from nanoLoop, largely unmodified:
+  nanoloop/session.py, nanoloop/memory.py, nanoloop/frontmatter.py,
+  nanoloop/skills.py (extended with a deterministic executor),
+  nanoloop/tools.py (list_skills removed; use_skill signature changed),
+  tests/test_session.py, tests/test_memory.py, tests/test_skills.py,
+  tests/test_tools.py
+
+Removed: nanoloop/agents.py, nanoloop/roles.py, nanoloop/model.py — the
+DeepAgents orchestrator these implemented is replaced by nanoloop/crew.py.

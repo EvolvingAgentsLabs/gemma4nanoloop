@@ -1,0 +1,19 @@
+# Phase 2 fixtures — hand-written (target_file, intent) pairs.
+# Deliberately independent of the planner so anchor-hit can be measured before
+# Phase 1 exists (IMPLEMENTATION.md §1). PLAN.md wants >=50; this is the
+# bootstrap set of 12. Grow it as failures reveal which shapes are worth encoding.
+# Mix by design: single-line anchors, multi-line anchors, repeated-text traps
+# (`return False` and `self._items` appear more than once in store.py), and
+# append-at-end cases.
+{"title": "Add a remove() method to Store", "target_file": "todo/store.py", "intent": "Store has a remove(title) method that deletes the first matching item and returns True, or False if absent."}
+{"title": "Make pending() accept a limit", "target_file": "todo/store.py", "intent": "pending() takes an optional limit argument and returns at most that many items."}
+{"title": "Add a count property to Store", "target_file": "todo/store.py", "intent": "Store exposes a count property returning the number of items."}
+{"title": "Give Item a priority field", "target_file": "todo/store.py", "intent": "Item has an int priority field defaulting to 0."}
+{"title": "Complete should be case-insensitive", "target_file": "todo/store.py", "intent": "complete() matches titles ignoring case."}
+{"title": "Add clear() to Store", "target_file": "todo/store.py", "intent": "Store has a clear() method emptying all items."}
+{"title": "Render tags in render_item", "target_file": "todo/format.py", "intent": "render_item appends space-separated #tags after the title when the item has tags."}
+{"title": "Add render_summary", "target_file": "todo/format.py", "intent": "format.py has render_summary(items) returning 'N done / M total'."}
+{"title": "Use a bullet instead of brackets", "target_file": "todo/format.py", "intent": "render_item uses a leading bullet for pending items instead of empty brackets."}
+{"title": "Add a done-only filter", "target_file": "todo/store.py", "intent": "Store has a done() method returning only completed items."}
+{"title": "Test the remove method", "target_file": "tests/test_store.py", "intent": "There is a test asserting remove() returns False for a title that is not present."}
+{"title": "Document the module", "target_file": "todo/format.py", "intent": "The module docstring mentions that rendering never mutates items."}

@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+calls.jsonl
+eval/anchor_failures.json
+eval/plan_results.json
+Memory/.index.json
+Sessions/
+workspace/
+*.egg-info/

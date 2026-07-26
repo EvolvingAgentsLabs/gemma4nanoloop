@@ -1,0 +1,13 @@
+# Fixed task set (PLAN.md §5). Re-run on EVERY change.
+# Bootstrap set of 8, per IMPLEMENTATION.md §11 — a harness that exists and is
+# small beats one that is scheduled and absent. Grow toward 30 across Phases 2-4
+# as failures reveal which tasks are worth encoding.
+# `steps` is the expected plan length, used to score Phase 1 plan validity.
+{"id": "t01", "goal": "Add a remove(title) method to the todo Store and a test for it", "steps": 2, "files": ["todo/store.py", "tests/test_store.py"]}
+{"id": "t02", "goal": "Make the todo store able to filter items by tag", "steps": 2, "files": ["todo/store.py", "tests/test_store.py"]}
+{"id": "t03", "goal": "Render tags after the title when formatting a todo item", "steps": 1, "files": ["todo/format.py"]}
+{"id": "t04", "goal": "Add a priority field to Item and sort pending items by it", "steps": 2, "files": ["todo/store.py"]}
+{"id": "t05", "goal": "Add a render_summary function that reports done vs total", "steps": 2, "files": ["todo/format.py", "tests/test_store.py"]}
+{"id": "t06", "goal": "Make complete() match titles case-insensitively", "steps": 2, "files": ["todo/store.py", "tests/test_store.py"]}
+{"id": "t07", "goal": "Add a clear() method that empties the store", "steps": 2, "files": ["todo/store.py", "tests/test_store.py"]}
+{"id": "t08", "goal": "Give Store a count property and use it in render_summary", "steps": 2, "files": ["todo/store.py", "todo/format.py"]}

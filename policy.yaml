@@ -1,0 +1,63 @@
+# NVIDIA OpenShell policy for the autonomous harness.
+# Docs: https://docs.nvidia.com/openshell/home
+# Policy is evaluated out-of-process at binary/destination/method/path level
+# across filesystem, network, and process layers. Default = deny.
+#
+# NOTE: confirm exact schema keys against your installed OpenShell version
+# (`openshell policy validate policy.yaml`). This reflects the documented model.
+
+version: 1
+
+filesystem:
+  # Agent may freely read/write inside the project workspace only.
+  allow:
+    - path: "./"
+      access: [read, write]
+    - path: "/tmp"
+      access: [read, write]
+  deny:
+    - path: "~/.ssh"
+    - path: "~/.aws"
+    - path: "~/.config"
+    - path: "/etc"
+
+network:
+  # Only the model gateway + package registries.
+  allow:
+    - destination: "openrouter.ai"
+      method: [https]
+    - destination: "pypi.org"
+      method: [https]
+    - destination: "files.pythonhosted.org"
+      method: [https]
+    - destination: "github.com"
+      method: [https]
+  deny:
+    - destination: "*"
+
+process:
+  # Binaries the agent's run_shell tool may invoke.
+  allow:
+    - binary: "git"
+    - binary: "python"
+    - binary: "python3"
+    - binary: "pip"
+    - binary: "uv"
+    - binary: "pytest"
+    - binary: "node"
+    - binary: "npm"
+  deny:
+    - binary: "curl"      # exfil risk; allow explicitly if needed
+    - binary: "ssh"
+    - binary: "sudo"
+
+# Privacy router: keep sensitive context on local models, route the rest to
+# the frontier model via OpenRouter.
+privacy_router:
+  default: frontier
+  local_when:
+    - contains_secrets: true
+
+audit:
+  enabled: true
+  path: "./.openshell/audit.log"

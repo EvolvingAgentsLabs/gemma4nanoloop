@@ -1,0 +1,49 @@
+[project]
+name = "gemma4nanoloop"
+version = "0.1.0"
+description = "Autonomous engineering crew on a local Gemma 4 12B. Phase-scoped state machine, anchor-based edits, deterministic gates. Fork of ismaelfaro/nanoLoop."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+keywords = ["agents", "llm", "gemma", "ollama", "litert", "local", "autonomous"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# deepagents + langgraph are deliberately absent: the orchestrator is a graph in
+# crew.py, not an LLM (PLAN.md D1). langchain-openai survives only as the
+# OpenAI-compatible HTTP client for Ollama / LiteRT-LM.
+dependencies = [
+    "langchain-openai>=0.2.0",
+    "langchain-core>=0.3.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.scripts]
+gemma4nanoloop = "nanoloop.main:cli"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["nanoloop*"]

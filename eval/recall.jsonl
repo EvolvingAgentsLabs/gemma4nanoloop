@@ -1,0 +1,15 @@
+# Phase 6 fixtures: hand-labeled recall queries (PLAN.md wants 30; bootstrap 10).
+# `relevant` lists note slugs that SHOULD appear in the top 5. Semantic recall@5
+# must beat the keyword baseline on this set before Phase 6 is accepted.
+# Queries are phrased deliberately WITHOUT the note's literal keywords — that gap
+# is exactly what a keyword search cannot cross and an embedding can.
+{"query": "how much memory can we spend on the KV cache", "relevant": ["hardware-budget"]}
+{"query": "why did we stop letting the model pick the next phase", "relevant": ["orchestrator-is-a-graph"]}
+{"query": "what happens when the model can't find the text it wants to change", "relevant": ["anchor-based-edits"]}
+{"query": "the laptop gets slow after a long run", "relevant": ["thermal-throttling", "hardware-budget"]}
+{"query": "how do we keep adding capabilities cheap", "relevant": ["skills-are-data"]}
+{"query": "why not just regenerate the whole file", "relevant": ["anchor-based-edits"]}
+{"query": "who decides if the code is good enough", "relevant": ["gates-not-judges"]}
+{"query": "what goes into the prompt each turn", "relevant": ["context-is-compiled"]}
+{"query": "can we run two models at once", "relevant": ["hardware-budget"]}
+{"query": "how many samples do we draw before giving up", "relevant": ["greedy-first"]}
