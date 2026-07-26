@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -127,6 +128,21 @@ def _truncate_front(text: str, limit: int = GATE_OUTPUT_LIMIT) -> str:
     return "[...truncated...]\n" + text[-limit:]
 
 
+def _gate_env() -> dict[str, str]:
+    """PATH with the running interpreter's bin/ first.
+
+    Gates run through `sh`, which does not inherit an activated virtualenv. Bare
+    `ruff` then resolves against the system PATH and fails with
+    `ruff: command not found` — which the repair loop dutifully feeds back to
+    the model, burning attempts on an error no edit can fix. Observed on the
+    first end-to-end run: 4 model calls, all with exact anchors, all wasted.
+    """
+    env = dict(os.environ)
+    bindir = str(Path(sys.executable).parent)
+    env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def run_gate(cwd: Path | str, gates: list[str] | None = None) -> list[GateResult]:
     """Run quality gates in order and stop at the first failure.
 
@@ -137,6 +153,7 @@ def run_gate(cwd: Path | str, gates: list[str] | None = None) -> list[GateResult
     if gates is None:
         gates = DEFAULT_GATES
 
+    env = _gate_env()
     results: list[GateResult] = []
     for cmd in gates:
         try:
@@ -147,6 +164,7 @@ def run_gate(cwd: Path | str, gates: list[str] | None = None) -> list[GateResult
                 text=True,
                 timeout=300,
                 cwd=str(cwd),
+                env=env,
             )
             out = (proc.stdout or "") + (proc.stderr or "")
             res = GateResult(cmd, proc.returncode == 0, _truncate_front(out))

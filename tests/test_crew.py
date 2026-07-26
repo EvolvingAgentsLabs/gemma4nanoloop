@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from nanoloop import crew
@@ -203,3 +205,23 @@ def test_run_plan_halts_after_a_failed_step(tmp_path):
         plan, "g", tmp_path, propose, gates=["true"], max_repairs=0, n_candidates=1
     )
     assert len(results) == 1 and not results[0].ok
+
+
+# --- gates must see the venv (found by the first end-to-end run) -------------
+
+
+def test_gate_env_puts_the_interpreter_bin_first():
+    """Gates run through `sh`, which does not inherit an activated virtualenv.
+    Without this, bare `ruff` fails with `command not found` and the repair loop
+    burns attempts on an error no edit can fix."""
+    import sys
+    from pathlib import Path
+
+    env = crew._gate_env()
+    assert env["PATH"].split(os.pathsep)[0] == str(Path(sys.executable).parent)
+
+
+def test_gates_can_actually_run_ruff(tmp_path):
+    (tmp_path / "ok.py").write_text("x = 1\n")
+    results = crew.run_gate(tmp_path, ["ruff --version"])
+    assert results[0].ok, results[0].output

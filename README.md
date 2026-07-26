@@ -106,6 +106,7 @@ Measured against the live model (see `IMPLEMENTATION.md` §0a):
 | model calls per completed step | median **1.0** — greedy succeeds |
 | structured-output parse rate | 100% |
 | latency per call | p50 **17.5 s**, p90 28.4 s |
+| full loop, end to end | **1/1 steps, 1 model call, 0 repairs** |
 | reasoning tokens per call | **0** (see below) |
 
 **The single biggest runtime finding:** Gemma 4 is a *reasoning* model, and

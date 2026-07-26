@@ -93,6 +93,32 @@ No throttling signal yet (early 16.8 s → late 11.6 s = 0.69×), but 12 steps o
 4 minutes is far too short to show it. The Phase 4 soak test at 30+ steps is
 still required and `eval/report.py` already plots the curve.
 
+### F5. Phase 3 — the full loop closes end to end
+
+`nanoloop.main run` on a copy of the fixture repo, live model, real gates:
+
+```
+plan          1 step   "Define remove method in Store class" (todo/store.py)
+plan-approval gate     AUTO-APPROVED (non-interactive)
+step 1        ok — 1 model call, 0 repairs, anchors=['exact']
+pre-ship gate          AUTO-APPROVED
+done          1/1 steps, 1 model call
+```
+
+The model wrote a correct `remove()` — enumerate, pop the first title match,
+return True, else False — and `ruff check`, `ruff format --check` and `pytest`
+all pass when re-run independently. One model call for a completed step is D7
+behaving exactly as designed.
+
+**A bug this run found (now fixed, `crew._gate_env`).** The first attempt failed
+with `ruff: command not found`: gates run through `sh`, which does not inherit
+an activated virtualenv. All four anchors that run were `exact` — the model was
+never at fault, but the repair loop dutifully fed an environment error back to
+it and burned 4 calls on something no edit could fix. `run_gate` now prepends
+`Path(sys.executable).parent` to `PATH`. Worth noting as a general shape: the
+repair loop cannot distinguish "the edit was wrong" from "the harness is
+broken", so harness errors are expensive.
+
 ---
 
 ## 0. Delta between PLAN.md and reality
