@@ -77,6 +77,16 @@ class Acceptance(BaseModel):
 
     symbol: str = Field(description="Function or class that must exist when done.")
     file: str = Field(description="Repo-relative file it must be defined in.")
+    check: str = Field(
+        default="",
+        description=(
+            "Python that EXERCISES the symbol and asserts the result, run from "
+            "the repo root. Include its import. Example: "
+            "'from todo.store import Store\\ns = Store()\\n"
+            "s.add('a', ['x'])\\nassert [i.title for i in s.by_tag('x')] == ['a']'. "
+            "Empty only if the symbol genuinely cannot be exercised."
+        ),
+    )
 
 
 class Plan(BaseModel):
@@ -653,6 +663,43 @@ def _grounded(symbol: str, goal: str) -> bool:
     return bare.lower().replace("_", "") in haystack
 
 
+ACCEPTANCE_TIMEOUT = 60
+
+
+def run_check(workspace: Path | str, check: str, index: int = 0) -> str:
+    """Execute one acceptance snippet. Returns "" on success, else the error.
+
+    Runs as a script from the repo root, so the package under test imports the
+    same way it does for pytest. The file is removed afterwards — an acceptance
+    probe is not part of the deliverable and must not end up in the diff.
+
+    This executes model-written code, exactly as the pytest gate already does.
+    It is confined to the workspace and time-bounded, but it IS execution: do
+    not point the crew at a workspace you would not run tests in.
+    """
+    workspace = Path(workspace)
+    probe = workspace / f"_acceptance_{index}.py"
+    try:
+        probe.write_text(check, encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, probe.name],
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=ACCEPTANCE_TIMEOUT,
+            env=_gate_env(),
+        )
+        if proc.returncode == 0:
+            return ""
+        return _truncate_front((proc.stdout or "") + (proc.stderr or ""), 800)
+    except subprocess.TimeoutExpired:
+        return f"acceptance check timed out after {ACCEPTANCE_TIMEOUT}s"
+    except OSError as e:
+        return f"could not run acceptance check: {e}"
+    finally:
+        probe.unlink(missing_ok=True)
+
+
 def verify_plan(workspace: Path | str, plan: Plan, goal: str = "") -> list[str]:
     """Unmet acceptance criteria, as human-readable strings.
 
@@ -663,13 +710,30 @@ def verify_plan(workspace: Path | str, plan: Plan, goal: str = "") -> list[str]:
     Criteria the goal does not mention are ignored — see _grounded().
     """
     unmet = []
-    for a in plan.acceptance:
+    for i, a in enumerate(plan.acceptance):
         if not a.symbol:
             continue
         if goal and not _grounded(a.symbol, goal):
             continue
+        # Existence first: it is instant and gives a precise message. Running a
+        # check against a symbol that does not exist only yields an ImportError
+        # or AttributeError, which is a worse thing to hand the planner.
         if not defines_symbol(workspace, a.file, a.symbol):
             unmet.append(f"`{a.symbol}` is not defined in {a.file}")
+            continue
+        if not a.check:
+            # Existence alone proves nothing: a by_tag() returning [] satisfies
+            # it. Under REQUIRE_CHECKS that counts as unmet, so a run cannot
+            # look stronger than it is.
+            if REQUIRE_CHECKS:
+                unmet.append(
+                    f"`{a.symbol}` exists but has NO executable check — "
+                    f"existence alone does not show it works"
+                )
+            continue
+        err = run_check(workspace, a.check, i)
+        if err:
+            unmet.append(f"`{a.symbol}` exists but its check failed:\n{err}")
     return unmet
 
 
@@ -700,6 +764,11 @@ def run_plan(
 
 
 MAX_REPLANS = int(os.environ.get("NANOLOOP_MAX_REPLANS", "2"))
+
+# Treat a criterion with no executable check as unmet. Off by default because it
+# fails runs on a technicality; on, it forbids the "symbol exists so we are done"
+# illusion that G1 is about. Worth turning on for work you actually care about.
+REQUIRE_CHECKS = os.environ.get("NANOLOOP_REQUIRE_CHECKS", "0").lower() in ("1", "true", "yes")
 
 
 @dataclass

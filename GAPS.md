@@ -9,14 +9,14 @@ Contexto: el loop **funciona** — plan → pasos → gates → verificación �
 
 ---
 
-## G1. La aceptación comprueba que EXISTE, no que FUNCIONA — 🔴 bloqueante
+## ~~G1~~. La aceptación comprueba que EXISTE, no que FUNCIONA — ✅ CERRADO
 
 Es el hueco más grande y el más fácil de pasar por alto, porque todo sale verde.
 
 ```python
 class Store:
     def by_tag(self, tag):
-        return []          # stub: siempre vacío
+        return []  # stub: siempre vacío
 ```
 ```
 criterio `by_tag` sobre ese stub  ->  CUMPLIDO
@@ -36,7 +36,7 @@ código está vacío.
 
 ```python
 class Acceptance(BaseModel):
-    test: str   # "s = Store(); s.add('a', ['x']); assert s.by_tag('x')"
+    test: str  # "s = Store(); s.add('a', ['x']); assert s.by_tag('x')"
     file: str
 ```
 
@@ -45,7 +45,20 @@ verdad: **los criterios los escribes tú**, no el planner. El modelo demostró q
 inventa criterios (`text_item`) y que olvida otros; el objetivo y su definición
 de "hecho" son justo lo que no conviene delegar.
 
-Coste: pequeño. Es la pieza con mejor relación valor/esfuerzo que queda.
+**HECHO.** `Acceptance.check` es ahora Python ejecutable que el grafo corre desde
+la raíz del repo, con timeout y borrando la sonda después. El mismo stub:
+
+```
+solo nombre : CUMPLIDO            <- el hueco
+con check   : `by_tag` exists but its check failed: AssertionError
+```
+
+Y `--accept criterios.json` deja que **los escribas tú**, ignorando los del
+planner — verificado de punta a punta: mis dos criterios sobrevivieron el replan
+y forzaron una segunda ronda hasta cumplirse (5/5 pasos, 2 rondas, 6 llamadas).
+
+`NANOLOOP_REQUIRE_CHECKS=1` trata como incumplido cualquier criterio sin check,
+para que una corrida no pueda parecer más fuerte de lo que es.
 
 ---
 

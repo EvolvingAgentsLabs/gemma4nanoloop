@@ -559,3 +559,73 @@ def test_schema_tightening_does_not_break_python_defaults():
 
 def test_edit_schema_still_requires_its_three_fields():
     assert set(crew.schema_of(Edit)["required"]) == {"path", "anchor", "replacement"}
+
+
+# --- G1: acceptance must show the code WORKS, not that a name exists --------
+
+
+def test_a_stub_satisfies_existence_but_fails_its_check(tmp_path):
+    """THE gap this closes. `by_tag` returning [] satisfies "the symbol exists";
+    ruff has no opinion on semantics and pytest only runs tests that already
+    exist, so a brand-new function is covered by nothing."""
+    (tmp_path / "s.py").write_text("class Store:\n    def by_tag(self, tag):\n        return []\n")
+    check = "from s import Store\nassert Store().by_tag('x') == ['a']\n"
+    plan = crew.Plan(
+        steps=[], acceptance=[crew.Acceptance(symbol="by_tag", file="s.py", check=check)]
+    )
+    unmet = crew.verify_plan(tmp_path, plan, "add a by_tag method")
+    assert len(unmet) == 1
+    assert "check failed" in unmet[0]
+    assert "AssertionError" in unmet[0]
+
+
+def test_a_real_implementation_passes_its_check(tmp_path):
+    (tmp_path / "s.py").write_text(
+        "class Store:\n"
+        "    def __init__(self):\n        self.items = []\n"
+        "    def add(self, t):\n        self.items.append(t)\n"
+        "    def by_tag(self, tag):\n        return [i for i in self.items if i == tag]\n"
+    )
+    check = "from s import Store\ns = Store()\ns.add('x')\nassert s.by_tag('x') == ['x']\n"
+    plan = crew.Plan(
+        steps=[], acceptance=[crew.Acceptance(symbol="by_tag", file="s.py", check=check)]
+    )
+    assert crew.verify_plan(tmp_path, plan, "add a by_tag method") == []
+
+
+def test_the_probe_file_is_removed(tmp_path):
+    """An acceptance probe is not part of the deliverable and must not surface
+    in the diff."""
+    (tmp_path / "s.py").write_text("def f():\n    return 1\n")
+    crew.run_check(tmp_path, "from s import f\nassert f() == 1\n", 0)
+    assert list(tmp_path.glob("_acceptance_*.py")) == []
+
+
+def test_probe_is_removed_even_when_the_check_fails(tmp_path):
+    (tmp_path / "s.py").write_text("def f():\n    return 2\n")
+    assert crew.run_check(tmp_path, "from s import f\nassert f() == 1\n", 0)
+    assert list(tmp_path.glob("_acceptance_*.py")) == []
+
+
+def test_missing_symbol_reports_that_rather_than_an_import_error(tmp_path):
+    """Existence is checked first: running a check against an absent symbol
+    yields an ImportError, which is a worse thing to hand the planner."""
+    (tmp_path / "s.py").write_text("x = 1\n")
+    plan = crew.Plan(
+        steps=[], acceptance=[crew.Acceptance(symbol="by_tag", file="s.py", check="assert False")]
+    )
+    unmet = crew.verify_plan(tmp_path, plan, "add by_tag")
+    assert "is not defined" in unmet[0] and "check failed" not in unmet[0]
+
+
+def test_checkless_criterion_is_unmet_under_require_checks(tmp_path, monkeypatch):
+    (tmp_path / "s.py").write_text("def by_tag():\n    pass\n")
+    plan = crew.Plan(steps=[], acceptance=[crew.Acceptance(symbol="by_tag", file="s.py")])
+    assert crew.verify_plan(tmp_path, plan, "add by_tag") == []
+    monkeypatch.setattr(crew, "REQUIRE_CHECKS", True)
+    assert "NO executable check" in crew.verify_plan(tmp_path, plan, "add by_tag")[0]
+
+
+def test_a_hanging_check_times_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(crew, "ACCEPTANCE_TIMEOUT", 2)
+    assert "timed out" in crew.run_check(tmp_path, "while True:\n    pass\n", 0)

@@ -38,6 +38,20 @@ WHOLE GOAL is finished: each function or class the goal asks for, and the file
 it belongs in. Read these off the GOAL, not off your steps — if the goal names
 two things and your steps only cover one, `acceptance` must still list both.
 
+Every criterion needs a `check`: real Python that USES the symbol and asserts
+the result. It runs from the repo root, so include the import. A criterion
+without a check proves nothing — a method that returns nothing at all would
+satisfy it. Write the check as the smallest example that would be wrong if the
+feature were missing or empty:
+
+  from todo.store import Store
+  s = Store()
+  s.add("a", ["work"])
+  s.add("b", ["home"])
+  assert [i.title for i in s.by_tag("work")] == ["a"]
+
+Use ONLY APIs the repo map and the goal show exist.
+
 Output JSON matching the schema. Nothing else."""
 
 

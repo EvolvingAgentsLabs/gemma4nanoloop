@@ -99,6 +99,12 @@ def cmd_plan(args) -> int:
     return 0
 
 
+def _load_criteria(path: str) -> list:
+    """Read acceptance criteria from a JSON file: [{symbol, file, check}, ...]."""
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    return [crew.Acceptance.model_validate(r) for r in raw]
+
+
 def cmd_run(args) -> int:
     """Full loop: plan -> iterate steps -> gates, with HITL at both ends."""
     con = _console()
@@ -119,8 +125,19 @@ def cmd_run(args) -> int:
     catalog = skills.catalog_text()
     approved = {"ok": True}
 
+    user_criteria = _load_criteria(args.accept) if args.accept else []
+    if user_criteria:
+        con.print(
+            f"[acceptance] {len(user_criteria)} criterion(s) supplied by you "
+            f"(the planner's own are ignored)"
+        )
+
     def _plan_fn(goal, repo_map, gaps):
         plan = propose_plan(goal, repo_map, gaps=gaps)
+        # Yours win outright. The planner has been observed inventing criteria
+        # and forgetting others; "done" is the one judgement worth keeping.
+        if user_criteria:
+            plan.acceptance = list(user_criteria)
         if gaps:
             con.print(f"[replan] {len(gaps)} unmet criterion(s) -> new plan")
         for i, st in enumerate(plan.steps):
@@ -231,6 +248,12 @@ def cli(argv: list[str] | None = None) -> int:
     sr.add_argument("--snapshot", default="copy", choices=["copy", "git"])
     sr.add_argument(
         "--n-candidates", type=int, default=crew.DEFAULT_N_CANDIDATES, dest="n_candidates"
+    )
+    sr.add_argument(
+        "--accept",
+        default="",
+        metavar="FILE",
+        help="JSON file of acceptance criteria you wrote; overrides the planner's",
     )
     sr.add_argument(
         "--max-replans",
