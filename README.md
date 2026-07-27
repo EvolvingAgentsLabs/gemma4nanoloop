@@ -109,10 +109,33 @@ failure of the work). Env: `NANOLOOP_BACKEND=ollama|litert|aistudio`,
 
 ## Examples
 
-Two worked examples live in `examples/`, both built around quantum circuits —
-not because the crew is a quantum tool, but because quantum software has
-unusually good **oracles**, and an oracle is what this project argues autonomy
-is actually limited by.
+Three worked examples live in `examples/`. They are built around domains with
+unusually good **oracles** — an exact unitary, a documented conserved domain —
+because an oracle is what this project argues autonomy is actually limited by.
+
+### `examples/bioinformatics-eyeless` — the fly's eye experiment
+
+```bash
+python examples/bioinformatics-eyeless/discover.py
+```
+
+A fly gene called `eyeless` and a human disease called `aniridia`. The names
+share nothing. The sequences share **133 residues at 93% identity**:
+
+```
+    fly    HSGVNQLGGVFVGGRPLPDSTRQKIVELAHSGARPCDISRILQVSNGCVSKILGRYYETG
+           |||||||||||| |||||||||||||||||||||||||||||||||||||||||||||||
+    human  HSGVNQLGGVFVNGRPLPDSTRQKIVELAHSGARPCDISRILQVSNGCVSKILGRYYETG
+```
+
+The opening exercise of *Developing Bioinformatics Computer Skills* (O'Reilly,
+2001), runnable offline in seconds. `exercise.md` turns it into a task for the
+crew — reintroduce the classic off-by-one in the coordinates and let `harvest`
+find and fix it. Solved by the **local 12B** in 3 steps, 3 model calls.
+
+It also shows why the sequences are vendored: the book's own coordinates no
+longer reproduce, because the database entries changed underneath it in 25
+years. The biology is identical; the numbers are not.
 
 ### `examples/quantum-circuit-opt` — acceptance criteria with an exact oracle
 
