@@ -9,7 +9,8 @@ a phase-scoped state machine that never asks the model to do the things a 12B
 does badly.
 
 - **`PLAN.md`** — what to build and why (architecture decisions D1–D8).
-- **`IMPLEMENTATION.md`** — order of work, verified ground truth, open questions.
+- **`IMPLEMENTATION.md`** — order of work, verified ground truth, measured findings.
+- **`GAPS.md`** — what is still missing for a real task, measured and prioritised.
 
 ## The core idea
 
