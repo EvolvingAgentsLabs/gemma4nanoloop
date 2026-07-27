@@ -34,6 +34,63 @@ of your replacement.
 Output JSON matching the schema. Nothing else."""
 
 
+CREATE_SYSTEM = """You write ONE complete new source file.
+
+Return two fields:
+  path     the file to create (use the current step's file)
+  content  the ENTIRE contents of that file
+
+Rules:
+- The file does not exist yet. There is nothing to copy and no anchor to match.
+- Write the WHOLE file, top to bottom: imports first, then the code.
+- It must PARSE. Close every parenthesis, bracket and quote you open. Before you
+  return, re-read your output and check the brackets balance.
+- Only call functions with the parameters the context shows they actually take.
+  Do not invent arguments for a method you were shown.
+- Import ONLY what you actually use. An unused import fails the lint gate.
+- Import ONLY from modules listed in the context. Never guess a package name.
+- Keep it short: one focused file, no extras.
+- Style: module docstring, then a BLANK LINE, then imports.
+
+Output JSON matching the schema. Nothing else."""
+
+
+def propose_new_file(
+    step: crew.Step,
+    ctx_text: str,
+    feedback: str = "",
+    temperature: float = 0.0,
+    *,
+    num_ctx: int | None = None,
+    step_index: int | None = None,
+    attempt: int | None = None,
+) -> Edit:
+    """Whole-file generation, for a file that does not exist yet.
+
+    Kept apart from propose() deliberately. Sharing the anchor prompt for this
+    produced 0/4 valid files, every one with unbalanced brackets: the model was
+    being told to copy an anchor that cannot exist, while also writing a file
+    from nothing. The returned Edit carries an empty anchor, which apply_edit
+    accepts only when the file is genuinely missing.
+    """
+    phase = "repair" if feedback else "build"
+    raw = model_ollama.chat(
+        CREATE_SYSTEM,
+        ctx_text,
+        phase=phase,
+        num_ctx=num_ctx or crew.PHASE_NUM_CTX[phase],
+        temperature=temperature,
+        schema=schema_of(crew.NewFile),
+        tools_offered=crew.PHASE_TOOLS[phase],
+        step_index=step_index,
+        attempt=attempt,
+    )
+    data = _extract_json(raw)
+    data.setdefault("path", step.target_file)
+    new = crew.NewFile.model_validate(data)
+    return Edit(path=new.path or step.target_file, anchor="", replacement=new.content)
+
+
 def propose(
     step: crew.Step,
     ctx_text: str,

@@ -22,6 +22,8 @@ cannot use.
 
 from __future__ import annotations
 
+import ast
+import json
 import os
 import subprocess
 import sys
@@ -45,6 +47,22 @@ class Step(BaseModel):
     title: str = Field(description="Short imperative summary of this step.")
     target_file: str = Field(description="Repo-relative path this step edits.")
     intent: str = Field(description="What must be true after this step.")
+    # Skill routing happens at PLAN time, with the catalog in the planner's
+    # prompt (D5: the model routes to and parameterizes a capability; the graph
+    # runs it). A step with a skill costs ZERO model calls in the build phase —
+    # the executor is deterministic Python.
+    skill: str = Field(default="", description="Skill name to run, or empty to edit code.")
+    skill_data: str = Field(default="", description="JSON parameters for the skill.")
+    # Deterministic acceptance for THIS step. The gates prove the repo is
+    # healthy; they cannot prove a step did its own job. Observed: a step titled
+    # "Add by_tag method" instead made complete() case-insensitive — valid code,
+    # all gates green, reported ok, and by_tag never existed. The model only has
+    # to NAME the symbol; code checks it (D2/D3).
+    defines: str = Field(
+        default="",
+        description="Function/class name this step must create, e.g. 'by_tag'. "
+        "Empty if the step changes behaviour without adding a name.",
+    )
 
 
 class Plan(BaseModel):
@@ -52,11 +70,34 @@ class Plan(BaseModel):
 
 
 class Edit(BaseModel):
-    """An anchor-based edit. The model copies `anchor` verbatim from the file."""
+    """An anchor-based edit. The model copies `anchor` verbatim from the file.
+
+    An EMPTY anchor means "create this file", and is legal ONLY when the file
+    does not exist (see apply_edit). That is not a hole in D4: D4 forbids
+    regenerating an EXISTING file, which is where a 12B corrupts work that is
+    already correct. A file that does not exist yet has nothing to corrupt, and
+    without this the crew cannot add a single new module or test.
+    """
 
     path: str = Field(description="Repo-relative file to edit.")
-    anchor: str = Field(description="Exact existing text to replace. Must be unique.")
-    replacement: str = Field(description="Text to put in its place.")
+    anchor: str = Field(
+        description="Exact existing text to replace, unique in the file. "
+        "Leave EMPTY only when creating a new file."
+    )
+    replacement: str = Field(description="Text to put in its place, or the new file's contents.")
+
+
+class NewFile(BaseModel):
+    """A file that does not exist yet.
+
+    Deliberately a SEPARATE schema from Edit. Reusing Edit with an empty anchor
+    forces the anchor-copying prompt onto a task that has no anchor, and the
+    model tries to satisfy both jobs at once. Measured: 0/4 successes that way,
+    all syntactically invalid Python.
+    """
+
+    path: str = Field(description="Repo-relative path of the new file.")
+    content: str = Field(description="Complete contents of the file.")
 
 
 def schema_of(model: type[BaseModel]) -> dict:
@@ -201,8 +242,28 @@ def apply_edit(root: Path | str, edit: Edit, *, fuzzy: bool | None = None) -> st
     target = (root / edit.path).resolve()
     if not target.is_relative_to(root.resolve()):
         raise ValueError(f"path escapes workspace: {edit.path}")
+
     if not target.exists():
-        raise AnchorError(anchors.Match.NOT_FOUND, f"file does not exist: {edit.path}")
+        # Create — only for a file that does not exist. See Edit's docstring:
+        # this is not a write_file backdoor, it is the only way to add a module.
+        if edit.anchor.strip():
+            raise AnchorError(
+                anchors.Match.NOT_FOUND,
+                f"file does not exist: {edit.path}. To create it, leave `anchor` "
+                f"empty and put the whole file in `replacement`.",
+            )
+        _check_syntax(edit.path, edit.replacement)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(edit.replacement, encoding="utf-8")
+        return "created"
+
+    if not edit.anchor.strip():
+        # D4, the part that matters: never regenerate a file that already exists.
+        raise AnchorError(
+            anchors.Match.AMBIGUOUS,
+            f"{edit.path} already exists, so `anchor` cannot be empty — an empty "
+            f"anchor would overwrite the whole file. Copy the exact text to replace.",
+        )
 
     text = target.read_text(encoding="utf-8")
     res = anchors.locate(text, edit.anchor, fuzzy=fuzzy)
@@ -230,6 +291,11 @@ class Ctx:
     file_slice: str = ""
     last_error: str = ""
     skills_catalog: str = ""
+    # Only rendered when the target file does NOT exist. Writing a new module
+    # means writing its imports, and without the map the model invents package
+    # names — observed: `from todo_app.store import Store` in a repo whose
+    # package is `todo`. For an edit it is noise, so it stays out.
+    repo_map: str = ""
 
     def render(self) -> str:
         parts = [f"# Goal\n{self.goal}"]
@@ -240,6 +306,11 @@ class Ctx:
                 f"# Current step\n{self.step.title}\n"
                 f"file: {self.step.target_file}\n"
                 f"intent: {self.step.intent}"
+            )
+        if self.repo_map:
+            parts.append(
+                f"# Modules that exist (import ONLY from these — do not invent "
+                f"package names)\n{self.repo_map}"
             )
         if self.file_slice:
             parts.append(
@@ -259,6 +330,94 @@ class Ctx:
 # ---------------------------------------------------------------------------
 # The build loop (D7)
 # ---------------------------------------------------------------------------
+
+
+def autofix(workspace: Path | str, path: str) -> None:
+    """Apply ruff's own mechanical fixes to one file before gating it.
+
+    D3 says verification leaves the model. The same logic applies to FORMATTING:
+    asking a small model to emit import-sorted, ruff-clean source wastes repair
+    cycles on problems a tool fixes deterministically and perfectly.
+
+    Observed across three runs of one task: the model produced correct logic that
+    failed the gate on `I001 import block un-sorted` and `F401 pytest imported
+    but unused` — both in ruff's auto-fixable set. Each cost a full repair round
+    trip and still came back imperfect.
+
+    Only mechanical fixes are applied. A genuine error (undefined name, bad call,
+    failing test) survives untouched and still reaches the model as feedback.
+    """
+    target = Path(workspace) / path
+    if target.suffix != ".py" or not target.exists():
+        return
+    env = _gate_env()
+    for cmd in (["ruff", "check", "--fix", "--quiet", path], ["ruff", "format", "--quiet", path]):
+        try:
+            subprocess.run(
+                cmd, cwd=str(workspace), capture_output=True, text=True, timeout=60, env=env
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return  # ruff missing or wedged: let the real gate report it
+
+
+def defines_symbol(workspace: Path | str, path: str, name: str) -> bool:
+    """Is `name` defined at any level of this Python file?"""
+    target = Path(workspace) / path
+    if not name or not target.exists() or target.suffix != ".py":
+        return True  # nothing claimed, nothing to check
+    try:
+        tree = ast.parse(target.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return False
+    return any(
+        isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) and n.name == name
+        for n in ast.walk(tree)
+    )
+
+
+class SyntaxErrorInEdit(ValueError):
+    """Generated Python does not parse. Feeds the repair loop like any gate."""
+
+
+def _check_syntax(path: str, text: str) -> None:
+    """Reject unparseable Python BEFORE it touches the disk.
+
+    Cheaper and far more precise than letting `ruff check` catch it a gate later:
+    the model gets the line, the column and the expected token instead of a lint
+    summary, and a broken file never exists even momentarily. The observed
+    failure was `store.add("Task 1", ["work"]` — one missing paren, repeated
+    across four attempts.
+    """
+    if not path.endswith(".py"):
+        return
+    try:
+        ast.parse(text)
+    except SyntaxError as e:
+        raise SyntaxErrorInEdit(
+            f"the generated Python is not valid: line {e.lineno}, {e.msg}. "
+            f"Check that every bracket and parenthesis is closed, then return "
+            f"the COMPLETE corrected file."
+        ) from e
+
+
+def run_skill(step: Step, workspace: Path | str) -> str:
+    """Execute the skill a plan step selected. Deterministic Python, no model."""
+    from . import skills as skills_mod
+
+    sk = skills_mod.get(step.skill)
+    if sk is None:
+        available = ", ".join(s.name for s in skills_mod.discover()) or "none"
+        raise ValueError(f"no skill '{step.skill}'; available: {available}")
+    params: dict = {}
+    if step.skill_data:
+        try:
+            parsed = json.loads(step.skill_data)
+            params = parsed if isinstance(parsed, dict) else {"value": parsed}
+        except json.JSONDecodeError as e:
+            raise ValueError(f"skill_data is not valid JSON: {e}") from e
+    if not sk.has_executor:
+        raise ValueError(f"skill '{step.skill}' has no deterministic executor")
+    return skills_mod.execute(sk, params, Path(workspace))
 
 
 @dataclass
@@ -295,6 +454,26 @@ def build_step(
     kinds: list[str] = []
     feedback = ""
 
+    # A skill step is deterministic: the planner already chose it and supplied
+    # the parameters, so there is nothing left for the model to decide (D5).
+    # Zero model calls, and the executor either works or raises.
+    if step.skill:
+        if snapshot is not None:
+            snapshot.save()
+        try:
+            out = run_skill(step, workspace)
+            kinds.append("skill")
+        except Exception as e:  # noqa: BLE001
+            if snapshot is not None:
+                snapshot.restore()
+            return StepResult(step, False, 0, 0, ["skill_failed"], f"{type(e).__name__}: {e}")
+        results = run_gate(workspace, gates)
+        if all(r.ok for r in results):
+            return StepResult(step, True, 0, 0, kinds)
+        if snapshot is not None:
+            snapshot.restore()
+        return StepResult(step, False, 0, 0, kinds, f"{out}\n\n{gate_feedback(results)}")
+
     def attempt(temperature: float, attempt_no: int) -> tuple[bool, str]:
         """One propose -> apply -> gate cycle. Returns (ok, error_text)."""
         nonlocal calls, kinds
@@ -303,6 +482,13 @@ def build_step(
 
         ctx.last_error = feedback
         ctx.file_slice = _read_slice(workspace, step.target_file)
+        # See Ctx.repo_map: needed only when writing a file from nothing.
+        if not (workspace / step.target_file).exists():
+            from . import repomap
+
+            ctx.repo_map = repomap.build(workspace)
+        else:
+            ctx.repo_map = ""
         try:
             edit = propose(step, ctx.render(), feedback, temperature)
             calls += 1
@@ -313,6 +499,7 @@ def build_step(
         try:
             kind = apply_edit(workspace, edit)
             kinds.append(kind)
+            autofix(workspace, edit.path)  # mechanical lint/format, not the model's job
         except AnchorError as e:
             kinds.append(e.kind.value)
             if snapshot is not None:
@@ -324,11 +511,21 @@ def build_step(
             return False, str(e)
 
         results = run_gate(workspace, gates)
-        if all(r.ok for r in results):
-            return True, ""
-        if snapshot is not None:
-            snapshot.restore()
-        return False, gate_feedback(results)
+        if not all(r.ok for r in results):
+            if snapshot is not None:
+                snapshot.restore()
+            return False, gate_feedback(results)
+        # Gates green is necessary, not sufficient: they say nothing about
+        # whether THIS step happened. See Step.defines.
+        if not defines_symbol(workspace, step.target_file, step.defines):
+            if snapshot is not None:
+                snapshot.restore()
+            return False, (
+                f"the code is valid but `{step.defines}` is still not defined in "
+                f"{step.target_file}. This step must add it. Do not change "
+                f"anything else."
+            )
+        return True, ""
 
     # --- greedy ---
     ok, err = attempt(0.0, 0)

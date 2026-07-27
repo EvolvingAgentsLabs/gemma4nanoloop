@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import calllog, crew, repomap, skills, tools
 from .planner import propose_plan
-from .proposer import propose
+from .proposer import propose, propose_new_file
 from .session import Session
 
 
@@ -134,6 +134,11 @@ def cmd_run(args) -> int:
 
     def _propose(step, ctx_text, feedback, temperature):
         text = ctx_text if not catalog else f"{ctx_text}\n\n# Available skills\n{catalog}"
+        # Two different jobs, two different prompts: copying an anchor out of an
+        # existing file, versus writing a file from nothing. Sharing one prompt
+        # for both is what produced 0/4 valid new files.
+        if not (workspace / step.target_file).exists():
+            return propose_new_file(step, text, feedback, temperature)
         return propose(step, text, feedback, temperature)
 
     def _on_step(i, res):

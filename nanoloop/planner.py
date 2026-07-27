@@ -24,6 +24,14 @@ Rules:
 - Each step must be small enough to do without seeing any other file.
 - `intent` states what must be TRUE when the step is done, not how to do it.
 - No step for running tests or linters. Those run automatically after every step.
+- To CREATE a new file, still make it a step; `target_file` is the new path.
+- Set `defines` to the function or class name the step must add (e.g. "by_tag").
+  Leave it empty only when the step changes behaviour without adding a name.
+
+SKILLS. If a listed skill matches a step, set `skill` to its name and `skill_data`
+to a JSON object of its parameters. A skill step runs deterministic code instead
+of generating source, so prefer one whenever it fits. Leave `skill` empty ("")
+for ordinary code edits. Never invent a skill name that is not listed.
 
 Output JSON matching the schema. Nothing else."""
 
@@ -50,9 +58,22 @@ def _extract_json(raw: str) -> dict:
         raise
 
 
-def propose_plan(goal: str, repo_map: str, *, num_ctx: int | None = None) -> Plan:
-    """Returns a schema-valid Plan or raises."""
+def propose_plan(
+    goal: str, repo_map: str, *, num_ctx: int | None = None, skills_catalog: str | None = None
+) -> Plan:
+    """Returns a schema-valid Plan or raises.
+
+    The skills catalog is injected HERE, not in the build phase: routing to a
+    capability is a planning decision (D5), and a step that names a skill costs
+    zero model calls to execute.
+    """
+    if skills_catalog is None:
+        from . import skills as skills_mod
+
+        skills_catalog = skills_mod.catalog_text()
     user = f"# Goal\n{goal}\n\n# Repo map (path — first docstring)\n{repo_map}"
+    if skills_catalog:
+        user += f"\n\n# Available skills (name: when to use)\n{skills_catalog}"
     raw = model_ollama.chat(
         SYSTEM,
         user,

@@ -87,6 +87,15 @@ STRUCTURED_MODE = os.environ.get("NANOLOOP_STRUCTURED_MODE", "openai")
 DEFAULT_NUM_CTX = 8192
 DEFAULT_TIMEOUT = int(os.environ.get("NANOLOOP_TIMEOUT", "900"))
 
+# Hard cap on generated tokens. One anchor edit or one small module is a few
+# hundred tokens; nothing legitimate approaches this.
+#
+# Without it a degenerate sample runs to the model's own ceiling: observed
+# out=32768 on an Edit, 696.7s of wall clock for output that could never parse.
+# Capped, the same failure returns truncated JSON in seconds and the repair loop
+# gets its turn. Fail fast beats fail expensive.
+MAX_OUTPUT_TOKENS = int(os.environ.get("NANOLOOP_MAX_OUTPUT_TOKENS", "4096"))
+
 
 def _endpoint() -> tuple[str, str]:
     base, model = BACKENDS.get(BACKEND, BACKENDS["ollama"])
@@ -102,7 +111,11 @@ def build_native_body(
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "stream": False,
         "think": THINK,
-        "options": {"temperature": temperature, "num_ctx": num_ctx},
+        "options": {
+            "temperature": temperature,
+            "num_ctx": num_ctx,
+            "num_predict": MAX_OUTPUT_TOKENS,
+        },
     }
     if schema is not None:
         body["format"] = schema
@@ -209,6 +222,7 @@ def _call_openai(
         "model": model,
         "messages": build_messages(system, user),
         "temperature": temperature,
+        "max_tokens": MAX_OUTPUT_TOKENS,
     }
     if remote:
         # A hosted endpoint has no num_ctx knob — that is a local-runtime concept.

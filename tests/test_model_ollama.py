@@ -202,3 +202,17 @@ def test_unclosed_thought_yields_no_false_answer():
 def test_reasoning_effort_omitted_by_default():
     """gemma-4-26b-a4b-it returns HTTP 400 if reasoning_effort is sent at all."""
     assert model_ollama.REASONING_EFFORT == ""
+
+
+# --- runaway generation cap --------------------------------------------------
+
+
+def test_output_is_capped():
+    """Observed: out=32768 on a single Edit, 696.7s of wall clock, output that
+    could never parse. Nothing legitimate comes near this."""
+    assert 0 < model_ollama.MAX_OUTPUT_TOKENS <= 8192
+
+
+def test_native_body_caps_num_predict():
+    body = model_ollama.build_native_body("m", "s", "u", 8192, 0.0, None)
+    assert body["options"]["num_predict"] == model_ollama.MAX_OUTPUT_TOKENS

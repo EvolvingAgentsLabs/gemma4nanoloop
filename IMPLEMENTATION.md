@@ -244,6 +244,63 @@ rápido), y **cerrar toda medición de aceptación contra el 12B local**. Los
 números de PLAN.md son números de 12B; desarrollar contra el 26B habría tapado
 el bug del repo map (F7), que solo apareció porque un 12B no puede adivinar.
 
+### F9. Corriendo todo contra AI Studio: qué funciona y qué no
+
+Batería completa con `gemma-4-26b-a4b-it`. Cinco bugs propios encontrados y
+arreglados; dos límites reales que quedan abiertos.
+
+**Funciona, verificado ejecutando el resultado:**
+
+| | |
+|---|---|
+| Phase 1 planner | 8/8 planes válidos, 8/8 rutas correctas |
+| Phase 2 anchor-hit | 100% (12/12), idéntico al 12B local |
+| Servicio FastAPI desde cero | 3/3 pasos, **0 llamadas al modelo** (todo skills) |
+| Edits multi-paso | anclajes `exact`, gates verdes, código correcto |
+| tests | 151 verdes |
+
+La demo del FastAPI es el mejor resultado: el planner enrutó los tres pasos a
+skills y los ejecutores hicieron el trabajo. `GET /health` y `GET /bookmarks`
+responden 200. Coste total: **una** llamada al modelo (el plan).
+
+**Cinco bugs propios que solo aparecieron ejecutando:**
+
+1. Plantillas de skills sin línea en blanco tras el docstring → `ruff format`
+   rechazaba la salida y **toda** skill fallaba.
+2. `add-endpoint` usaba `json.dumps({"ok": True})` → `{"ok": true}`: JSON válido,
+   `NameError` en Python. Ahora hay `_py_literal()`.
+3. Generación desbocada: `out=32768` en un solo `Edit`, **696,7 s** de reloj para
+   una salida que no podía parsear. Cap de 4096 tokens → falla en segundos.
+4. Crear ficheros con el prompt de anclajes: **0/4 válidos**, todos con
+   paréntesis sin cerrar. Prompt y esquema separados (`NewFile`) lo arreglaron.
+5. Sin repo map al crear, el modelo inventaba paquetes (`todo_app` en un repo
+   cuyo paquete es `todo`).
+
+Además: validación de sintaxis con `ast.parse` antes de tocar disco, y `autofix`
+(ruff `--fix` + `format`) sobre el fichero editado antes de los gates — pedirle
+formato perfecto a un modelo pequeño gasta reparaciones en algo que una
+herramienta arregla siempre.
+
+**F9.1 — El hallazgo de fondo: gates verdes ≠ paso cumplido.**
+
+Un paso titulado *"Add by_tag method"* produjo en su lugar un `complete()`
+case-insensitive. Código válido, los tres gates en verde, reportado `ok`… y
+`by_tag` nunca existió. Los gates prueban que el repo está sano; **no prueban
+que el paso hiciera su trabajo**. Añadido `Step.defines`: el modelo solo NOMBRA
+el símbolo, y `defines_symbol()` lo verifica con `ast` (D2/D3). Un paso que no
+lo crea ahora falla con feedback exacto.
+
+**Límites abiertos, sin resolver:**
+
+- **No hay verificación a nivel de PLAN.** Con `defines` funcionando por paso,
+  una corrida devolvió `1/1 steps ok` para el objetivo *"añade by_tag Y haz que
+  add acepte tags"*: el planner emitió **un solo paso** y omitió `by_tag`. Todo
+  verde, mitad del objetivo. La verificación por paso no cubre un plan
+  incompleto.
+- **Generar ficheros nuevos sigue siendo el punto débil.** Editar con anclajes:
+  ~100%. Escribir un fichero entero: falla repetidamente, incluso con el 26B.
+  Es exactamente lo que D4 predice, y el motivo de que los anclajes existan.
+
 ---
 
 ## 0. Delta between PLAN.md and reality

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -225,3 +226,225 @@ def test_gates_can_actually_run_ruff(tmp_path):
     (tmp_path / "ok.py").write_text("x = 1\n")
     results = crew.run_gate(tmp_path, ["ruff --version"])
     assert results[0].ok, results[0].output
+
+
+# --- file creation: empty anchor, new file only -----------------------------
+
+
+def test_empty_anchor_creates_a_new_file(tmp_path):
+    kind = crew.apply_edit(tmp_path, Edit(path="pkg/new.py", anchor="", replacement="X = 1\n"))
+    assert kind == "created"
+    assert (tmp_path / "pkg" / "new.py").read_text() == "X = 1\n"
+
+
+def test_empty_anchor_refuses_to_overwrite_an_existing_file(tmp_path):
+    """D4's real content: never regenerate a file that already exists."""
+    f = tmp_path / "m.py"
+    f.write_text("IMPORTANT = 1\n")
+    with pytest.raises(AnchorError) as exc:
+        crew.apply_edit(tmp_path, Edit(path="m.py", anchor="", replacement="wiped"))
+    assert exc.value.kind is Match.AMBIGUOUS
+    assert f.read_text() == "IMPORTANT = 1\n"
+
+
+def test_missing_file_with_a_real_anchor_says_how_to_create_it(tmp_path):
+    with pytest.raises(AnchorError) as exc:
+        crew.apply_edit(tmp_path, Edit(path="a.py", anchor="x", replacement="y"))
+    assert "leave `anchor` empty" in str(exc.value)
+
+
+# --- skill steps: zero model calls -------------------------------------------
+
+
+def test_skill_step_runs_without_calling_the_model(tmp_path, monkeypatch):
+    import nanoloop.skills as sk
+
+    monkeypatch.setattr(sk, "SKILLS_DIR", Path(__file__).resolve().parent.parent / "Skills")
+
+    def propose(*a):
+        raise AssertionError("a skill step must not call the model")
+
+    step = Step(
+        title="scaffold",
+        target_file="app/main.py",
+        intent="service exists",
+        skill="scaffold-fastapi",
+        skill_data='{"title": "svc"}',
+    )
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, propose, gates=["true"])
+    assert res.ok
+    assert res.model_calls == 0
+    assert res.anchor_kinds == ["skill"]
+    assert (tmp_path / "app" / "main.py").exists()
+
+
+def test_unknown_skill_fails_loudly(tmp_path):
+    step = Step(title="x", target_file="a.py", intent="i", skill="does-not-exist")
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, lambda *a: None, gates=["true"])
+    assert not res.ok and "no skill" in res.final_error
+
+
+def test_bad_skill_data_fails_loudly(tmp_path, monkeypatch):
+    import nanoloop.skills as sk
+
+    monkeypatch.setattr(sk, "SKILLS_DIR", Path(__file__).resolve().parent.parent / "Skills")
+    step = Step(
+        title="x", target_file="a.py", intent="i", skill="setup-pytest", skill_data="{not json"
+    )
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, lambda *a: None, gates=["true"])
+    assert not res.ok and "not valid JSON" in res.final_error
+
+
+def test_ordinary_steps_still_have_no_skill():
+    assert Step(title="t", target_file="f.py", intent="i").skill == ""
+
+
+# --- syntax validation before writing ---------------------------------------
+
+
+def test_unparseable_python_is_rejected_before_touching_disk(tmp_path):
+    """Observed 4x in a row: `store.add("Task 1", ["work"]` — one missing paren.
+    ruff would catch it a gate later; this catches it with line and reason, and
+    the broken file never exists at all."""
+    bad = 'def f():\n    g("a", ["b"]\n    h("c")\n'
+    with pytest.raises(crew.SyntaxErrorInEdit) as exc:
+        crew.apply_edit(tmp_path, Edit(path="t.py", anchor="", replacement=bad))
+    assert "not valid" in str(exc.value)
+    assert not (tmp_path / "t.py").exists()
+
+
+def test_valid_python_is_created(tmp_path):
+    crew.apply_edit(tmp_path, Edit(path="t.py", anchor="", replacement="X = 1\n"))
+    assert (tmp_path / "t.py").read_text() == "X = 1\n"
+
+
+def test_non_python_files_are_not_syntax_checked(tmp_path):
+    crew.apply_edit(tmp_path, Edit(path="notes.md", anchor="", replacement="# ((("))
+    assert (tmp_path / "notes.md").exists()
+
+
+def test_syntax_error_reaches_the_repair_loop(tmp_path):
+    """SyntaxErrorInEdit is a ValueError, so build_step feeds it back as text."""
+    seen = []
+
+    def propose(step, ctx_text, feedback, temperature):
+        seen.append(feedback)
+        body = "def f(:\n" if not feedback else "X = 1\n"
+        return Edit(path="t.py", anchor="", replacement=body)
+
+    step = Step(title="t", target_file="t.py", intent="i")
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, propose, gates=["true"])
+    assert res.ok
+    assert "not valid" in seen[1]
+
+
+def test_repo_map_is_rendered_only_for_new_files():
+    """Writing a module means writing its imports. Without the map the model
+    invents package names (`todo_app` for a package called `todo`); for an
+    ordinary edit the map is just noise in a tight budget."""
+    step = Step(title="t", target_file="new.py", intent="i")
+    with_map = Ctx(goal="g", step=step, repo_map="todo/store.py\n    defines: Store").render()
+    assert "do not invent" in with_map and "todo/store.py" in with_map
+    assert "Modules that exist" not in Ctx(goal="g", step=step).render()
+
+
+# --- deterministic normalization before gating ------------------------------
+
+
+def test_autofix_removes_an_unused_import(tmp_path):
+    """F401 and I001 are in ruff's auto-fixable set. Spending a model repair
+    round trip on them — observed three times on one task — is pure waste."""
+    f = tmp_path / "t.py"
+    f.write_text('"""D."""\n\nimport pytest\n\nX = 1\n')
+    crew.autofix(tmp_path, "t.py")
+    assert "import pytest" not in f.read_text()
+    assert "X = 1" in f.read_text()
+
+
+def test_autofix_sorts_imports(tmp_path):
+    f = tmp_path / "t.py"
+    f.write_text('"""D."""\n\nimport sys\nimport os\n\nprint(os, sys)\n')
+    crew.autofix(tmp_path, "t.py")
+    text = f.read_text()
+    assert text.index("import os") < text.index("import sys")
+
+
+def test_autofix_leaves_real_errors_alone(tmp_path):
+    """A genuine mistake must still reach the model as gate feedback."""
+    f = tmp_path / "t.py"
+    f.write_text('"""D."""\n\nX = undefined_name\n')
+    crew.autofix(tmp_path, "t.py")
+    assert "undefined_name" in f.read_text()
+
+
+def test_autofix_ignores_non_python(tmp_path):
+    f = tmp_path / "a.md"
+    f.write_text("# hi\n")
+    crew.autofix(tmp_path, "a.md")
+    assert f.read_text() == "# hi\n"
+
+
+def test_autofix_tolerates_a_missing_file(tmp_path):
+    crew.autofix(tmp_path, "nope.py")  # must not raise
+
+
+# --- per-step intent verification --------------------------------------------
+
+
+def test_gates_green_is_not_enough_when_a_step_must_define_something(tmp_path):
+    """The failure this exists for: a step titled "Add by_tag method" instead
+    made complete() case-insensitive. Valid code, all three gates green,
+    reported ok — and by_tag never existed. Gates prove the repo is healthy,
+    not that THIS step happened."""
+    f = tmp_path / "m.py"
+    f.write_text("def existing():\n    return 1\n")
+
+    def propose(step, ctx_text, feedback, temperature):
+        # A real but unrelated edit — exactly the observed failure.
+        return Edit(path="m.py", anchor="return 1", replacement="return 2")
+
+    step = Step(title="add by_tag", target_file="m.py", intent="i", defines="by_tag")
+    res = crew.build_step(
+        step,
+        Ctx(goal="g", step=step),
+        tmp_path,
+        propose,
+        gates=["true"],
+        max_repairs=0,
+        n_candidates=1,
+    )
+    assert not res.ok
+    assert "by_tag" in res.final_error and "still not defined" in res.final_error
+
+
+def test_step_passes_once_the_symbol_appears(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("def existing():\n    return 1\n")
+
+    def propose(step, ctx_text, feedback, temperature):
+        return Edit(
+            path="m.py",
+            anchor="def existing():",
+            replacement="def by_tag(tag):\n    return []\n\n\ndef existing():",
+        )
+
+    step = Step(title="add by_tag", target_file="m.py", intent="i", defines="by_tag")
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, propose, gates=["true"])
+    assert res.ok
+
+
+def test_steps_without_a_named_symbol_are_unaffected(tmp_path):
+    (tmp_path / "m.py").write_text("X = 1\n")
+
+    def propose(step, ctx_text, feedback, temperature):
+        return Edit(path="m.py", anchor="X = 1", replacement="X = 2")
+
+    step = Step(title="bump", target_file="m.py", intent="i")  # defines=""
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, propose, gates=["true"])
+    assert res.ok
+
+
+def test_defines_symbol_finds_methods_inside_classes(tmp_path):
+    (tmp_path / "m.py").write_text("class S:\n    def by_tag(self):\n        pass\n")
+    assert crew.defines_symbol(tmp_path, "m.py", "by_tag")
+    assert not crew.defines_symbol(tmp_path, "m.py", "missing")

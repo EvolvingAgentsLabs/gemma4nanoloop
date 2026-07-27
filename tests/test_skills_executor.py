@@ -125,3 +125,53 @@ def test_use_skill_surfaces_executor_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(tools, "WORKDIR", tmp_path)
     out = tools.use_skill.invoke({"name": "add-endpoint", "data": "{}"})
     assert "failed" in out and "path" in out
+
+
+# --- executors must emit gate-clean code ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "params"),
+    [
+        ("scaffold-fastapi", {"title": "svc"}),
+        ("setup-pytest", {}),
+    ],
+)
+def test_executor_output_passes_the_default_gates(tmp_path, name, params):
+    """A skill whose output fails `ruff format --check` makes EVERY skill step
+    fail — found when the first scaffold-from-scratch run died on a missing
+    blank line after a module docstring. The model was never involved."""
+    import subprocess
+    import sys
+
+    skills.execute(skills.get(name), params, tmp_path)
+    ruff = str(Path(sys.executable).parent / "ruff")
+    for cmd in ([ruff, "check", "."], [ruff, "format", "--check", "."]):
+        proc = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+        assert proc.returncode == 0, f"{' '.join(cmd)}:\n{proc.stdout}{proc.stderr}"
+
+
+def test_add_endpoint_output_passes_the_gates(tmp_path):
+    import subprocess
+    import sys
+
+    skills.execute(skills.get("scaffold-fastapi"), {}, tmp_path)
+    skills.execute(skills.get("add-endpoint"), {"path": "/items"}, tmp_path)
+    ruff = str(Path(sys.executable).parent / "ruff")
+    for cmd in ([ruff, "check", "."], [ruff, "format", "--check", "."]):
+        proc = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+        assert proc.returncode == 0, f"{' '.join(cmd)}:\n{proc.stdout}{proc.stderr}"
+
+
+def test_py_literal_emits_python_not_json(tmp_path):
+    """json.dumps gives `true`; repr gives single quotes. Both fail a gate."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "add_ep", SKILLS_ROOT / "add-endpoint" / "execute.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod._py_literal({"ok": True}) == '{"ok": True}'
+    assert mod._py_literal({"a": None, "b": [1, "x"]}) == '{"a": None, "b": [1, "x"]}'
+    assert eval(mod._py_literal({"ok": False})) == {"ok": False}  # noqa: S307

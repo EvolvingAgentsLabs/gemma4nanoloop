@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 MAIN = '''"""{title} — FastAPI service."""
+
 from fastapi import FastAPI
 
 app = FastAPI(title="{title}")
@@ -22,6 +23,7 @@ def health() -> dict[str, str]:
 '''
 
 TEST = '''"""Health-route test for {title}."""
+
 from fastapi.testclient import TestClient
 
 from {app_dir}.main import app

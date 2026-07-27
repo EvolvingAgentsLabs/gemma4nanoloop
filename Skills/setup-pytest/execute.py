@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 CONFTEST = '''"""Put the repo root on sys.path so tests import the package under test."""
+
 import sys
 from pathlib import Path
 
