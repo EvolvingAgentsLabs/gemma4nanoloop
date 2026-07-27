@@ -11,6 +11,7 @@ does badly.
 - **`PLAN.md`** — what to build and why (architecture decisions D1–D8).
 - **`IMPLEMENTATION.md`** — order of work, verified ground truth, measured findings.
 - **`GAPS.md`** — what is still missing for a real task, measured and prioritised.
+- **`NEXT-STEPS.md`** — where it was left, what to do next, and the traps that already cost hours.
 
 ## The core idea
 
