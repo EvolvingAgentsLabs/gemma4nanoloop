@@ -1196,8 +1196,30 @@ class GoalResult:
     plan_fixes: list[str] = field(default_factory=list)
 
     @property
+    def declared_criteria(self) -> bool:
+        return any(p.acceptance for p in self.plans)
+
+    @property
     def ok(self) -> bool:
-        return not self.gave_up and not self.unmet and all(r.ok for r in self.steps)
+        """Done means every acceptance criterion is met.
+
+        A failed STEP does not veto that. The criteria are the definition of
+        done — that is the whole point of having them — and a step often fails
+        because there was nothing left for it to do. Observed: a run reduced a
+        circuit exactly as asked, its criterion passed, and it still exited 1
+        because a later step could not find anything to remove. That is the
+        mirror image of "green but not done", and it is just as wrong: under
+        `harvest --deliver` a completed goal would have been discarded instead
+        of committed.
+
+        With no criteria declared there is nothing better to go on, so the
+        steps remain the verdict.
+        """
+        if self.gave_up:
+            return False
+        if self.declared_criteria:
+            return not self.unmet
+        return all(r.ok for r in self.steps)
 
 
 def run_goal(

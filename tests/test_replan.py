@@ -149,3 +149,52 @@ def test_a_later_round_cannot_weaken_an_earlier_criterion(tmp_path):
         "fix wrong", tmp_path, plan_fn, lambda *a: None, gates=["true"], max_replans=1
     )
     assert not res.ok and "check failed" in res.unmet[0]
+
+
+def test_a_met_criterion_outranks_a_failed_step(tmp_path):
+    """The mirror image of "green but not done". Observed: a run reduced a
+    circuit exactly as asked, its criterion passed, and it still exited 1
+    because a later step found nothing left to remove. Under harvest --deliver
+    that discards completed work instead of committing it."""
+    (tmp_path / "s.py").write_text("def done():\n    return 1\n")
+
+    def plan_fn(goal, repo_map, gaps):
+        return _plan(
+            [Step(title="impossible", target_file="s.py", intent="i")],
+            [
+                Acceptance(
+                    symbol="done", file="s.py", check="from s import done\nassert done() == 1\n"
+                )
+            ],
+        )
+
+    def propose(step, ctx_text, feedback, temperature):
+        return Edit(path="s.py", anchor="NOT PRESENT", replacement="x")
+
+    res = crew.run_goal(
+        "make done work", tmp_path, plan_fn, propose, gates=["true"], max_replans=0, n_candidates=1
+    )
+    assert not all(r.ok for r in res.steps)  # a step really did fail
+    assert res.unmet == []  # but the goal is met
+    assert res.ok
+
+
+def test_without_criteria_a_failed_step_still_fails_the_goal(tmp_path):
+    """Nothing better to go on, so the steps remain the verdict."""
+    (tmp_path / "s.py").write_text("X = 1\n")
+
+    def plan_fn(goal, repo_map, gaps):
+        return _plan([Step(title="t", target_file="s.py", intent="i")], [])
+
+    def propose(step, ctx_text, feedback, temperature):
+        return Edit(path="s.py", anchor="NOT PRESENT", replacement="x")
+
+    res = crew.run_goal(
+        "g", tmp_path, plan_fn, propose, gates=["true"], max_replans=0, n_candidates=1
+    )
+    assert not res.ok
+
+
+def test_giving_up_still_overrides_everything(tmp_path):
+    res = crew.GoalResult(gave_up="budget exhausted")
+    assert not res.ok
