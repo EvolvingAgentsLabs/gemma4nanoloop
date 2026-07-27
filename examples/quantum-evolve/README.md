@@ -16,8 +16,8 @@ y parar en el primero tira la búsqueda a la basura.
 El evaluador es la misma idea que `Acceptance.check`, partida en dos:
 
 ```python
-valid = Operator(candidate).equiv(Operator(reference))   # gate duro
-score = sum(qc.count_ops().values())                     # gradiente
+valid = Operator(candidate).equiv(Operator(reference))  # gate duro
+score = sum(qc.count_ops().values())  # gradiente
 ```
 
 Un candidato inválido puntúa cero por corto que sea. Si no, el bucle aprende que
@@ -37,7 +37,9 @@ en `rz(0.7)` si sabes que un `rz` sobre el qubit de control conmuta a través de
 `cx`.
 
 ```python
-qc.h(0); qc.rz(0.7, 0); qc.cx(0, 1)     # 0.3 + 0.4 = 0.7
+qc.h(0)
+qc.rz(0.7, 0)
+qc.cx(0, 1)  # 0.3 + 0.4 = 0.7
 ```
 
 Unitario idéntico, verificado aparte.
@@ -72,6 +74,28 @@ y ese patrón se aplica allí donde *no* hay un transpilador: heurísticas sin
 algoritmo conocido, código que hay que hacer rápido sin cambiar su semántica,
 ajuste de parámetros con una métrica medible. El circuito cuántico es el banco de
 pruebas, no el caso de uso.
+
+## Llevado al crew: `--optimize`
+
+El patrón ya no vive solo en este script. `nanoloop run --optimize FILE` acepta
+un fichero que define `score(workspace) -> float | None` (**menor es mejor**) y
+cambia la estrategia del bucle:
+
+```
+sin scorer   primer candidato que pasa -> para        (1 llamada típica)
+con scorer   puntúa los N, se queda con el mejor      (siempre N llamadas)
+```
+
+Dos cosas que hubo que aprender construyéndolo, ambas descubiertas ejecutando:
+
+1. **Exige snapshot.** Sin árbol limpio por candidato, el candidato 2 ve el edit
+   del 1, su anchor ya no casa, y la población colapsa en una cadena que se
+   acumula. Ahora falla con un mensaje que lo dice, en vez de comportarse raro.
+2. **Necesita conocer al titular.** La primera versión elegía el mejor
+   *candidato* y cantaba victoria aunque ninguno mejorase el punto de partida —
+   una corrida reportó `1/1 steps solved` habiendo ido de 10 compuertas a 10.
+   Una optimización que no optimiza es un fallo, no un éxito plano. Ahora se
+   mide el baseline antes y un candidato que no lo bate no gana.
 
 ## Correrlo
 

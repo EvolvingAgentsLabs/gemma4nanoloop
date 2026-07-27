@@ -207,6 +207,14 @@ def cmd_run(args) -> int:
         if not res.ok:
             con.print(f"  {res.final_error[:400]}")
 
+    scorer = None
+    if getattr(args, "optimize", ""):
+        scorer = crew.load_scorer(args.optimize)
+        con.print(
+            f"[optimize] scoring every candidate with {args.optimize} "
+            f"(lower is better); each step spends {args.n_candidates} call(s)"
+        )
+
     result = crew.run_goal(
         args.goal,
         workspace,
@@ -217,6 +225,7 @@ def cmd_run(args) -> int:
         snapshot=snap,
         on_step=_on_step,
         n_candidates=args.n_candidates,
+        scorer=scorer,
     )
 
     if not approved["ok"]:
@@ -445,6 +454,14 @@ def cli(argv: list[str] | None = None) -> int:
         default=crew.MAX_REPLANS,
         dest="max_replans",
         help="extra planning rounds when acceptance criteria are unmet",
+    )
+    sr.add_argument(
+        "--optimize",
+        default="",
+        metavar="FILE",
+        help="a Python file defining score(workspace) -> float|None (lower is "
+        "better). Scores every candidate and keeps the best, instead of "
+        "stopping at the first that passes. Always spends --n-candidates calls.",
     )
     sr.add_argument(
         "--max-calls",

@@ -599,6 +599,30 @@ class StepResult:
     final_error: str = ""
 
 
+def load_scorer(path: Path | str):
+    """Load a scoring function from a Python file.
+
+    The file must define `score(workspace) -> float | None`, where LOWER IS
+    BETTER (gate count, runtime, bytes) and None means "this candidate is not
+    acceptable at all". Return the negative if your metric is higher-is-better.
+
+    A scorer turns the loop from "stop at the first thing that works" into
+    "find the best thing that works" — see build_step.
+    """
+    import importlib.util
+
+    path = Path(path)
+    spec = importlib.util.spec_from_file_location("nanoloop_scorer", path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"cannot load scorer from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fn = getattr(module, "score", None)
+    if fn is None:
+        raise ValueError(f"{path} defines no score(workspace) function")
+    return fn
+
+
 def build_step(
     step: Step,
     ctx: Ctx,
@@ -610,12 +634,21 @@ def build_step(
     max_repairs: int = DEFAULT_MAX_REPAIRS,
     snapshot=None,  # snapshot.Workspace-like: .save() / .restore()
     step_index: int | None = None,
+    scorer=None,  # (workspace) -> float | None; lower is better
 ) -> StepResult:
     """Greedy attempt -> bounded repair loop -> best-of-N only if greedy failed.
 
     Typical cost is ONE model call. Best-of-N activates only after the greedy
     sample fails a gate, because on this hardware a 300-token edit is 15-20s and
     diversity is expensive (D7).
+
+    WITH A SCORER the economics invert and so does the strategy. For a bug fix,
+    "correct" is the whole requirement, so the first passing candidate is the
+    answer and stopping early is free. For an optimisation there is no such
+    stopping point: every correct candidate is still comparable to every other,
+    and taking the first one throws the search away. So a scored run evaluates
+    the WHOLE population and keeps the best — which means it always spends
+    n_candidates calls, never fewer. That is a deliberate cost, not a leak.
     """
     workspace = Path(workspace)
     calls = 0
@@ -701,6 +734,29 @@ def build_step(
             )
         return True, ""
 
+    if scorer is not None:
+        if snapshot is None:
+            # Not a nicety: without a clean tree per candidate, candidate 2 sees
+            # candidate 1's edit, its anchor no longer matches, and the
+            # population collapses to "whatever the first one did". Scored
+            # selection only means anything if the candidates are independent (D8).
+            raise ValueError(
+                "scored selection requires a snapshot: candidates must each start "
+                "from a clean tree, or they build on one another instead of competing"
+            )
+        return _build_step_scored(
+            step,
+            ctx,
+            workspace,
+            propose,
+            gates=gates,
+            n_candidates=n_candidates,
+            snapshot=snapshot,
+            step_index=step_index,
+            scorer=scorer,
+            kinds=kinds,
+        )
+
     # --- greedy ---
     ok, err = attempt(0.0, 0)
     if ok:
@@ -769,6 +825,104 @@ def symbol_span(text: str, needles: list[str]) -> tuple[int, int] | None:
                 end = getattr(node, "end_lineno", None) or node.lineno
                 return node.lineno, end
     return None
+
+
+def _build_step_scored(
+    step: Step,
+    ctx: Ctx,
+    workspace: Path,
+    propose,
+    *,
+    gates,
+    n_candidates: int,
+    snapshot,
+    step_index,
+    scorer,
+    kinds: list[str],
+) -> StepResult:
+    """Evaluate the whole population, keep the best-scoring valid candidate.
+
+    Each candidate is applied to a clean tree, gated, scored, then reverted — so
+    candidates never build on one another (D8). The winner is re-applied at the
+    end, which costs one extra apply and no extra model call.
+    """
+    # The incumbent: what the tree already scores. Without this the loop picks
+    # the best CANDIDATE and calls it a win even when none of them beat doing
+    # nothing — observed: a run reported 1/1 steps solved having gone from 10
+    # gates to 10 gates. An optimisation that does not optimise is a failure,
+    # not a success with a flat result.
+    try:
+        baseline = scorer(workspace)
+    except Exception:  # noqa: BLE001 - an unscoreable start is not a reason to stop
+        baseline = None
+
+    best: tuple[float, Edit] | None = None
+    calls = 0
+    errors: list[str] = []
+
+    for i in range(max(1, n_candidates)):
+        if snapshot is not None:
+            snapshot.save()
+        ctx.last_error = ""
+        ctx.file_slice = _read_slice(workspace, step.target_file, step=step)
+        try:
+            # Candidate 0 is greedy; the rest explore around it.
+            edit = propose(step, ctx.render(), "", 0.0 if i == 0 else 0.3 * i)
+            calls += 1
+        except BudgetExhausted:
+            raise
+        except Exception as e:  # noqa: BLE001
+            calls += 1
+            errors.append(f"candidate {i}: no valid edit ({e})")
+            continue
+
+        try:
+            kinds.append(apply_edit(workspace, edit))
+            autofix(workspace, edit.path)
+        except (AnchorError, ValueError, OSError) as e:
+            errors.append(f"candidate {i}: {e}")
+            if snapshot is not None:
+                snapshot.restore()
+            continue
+
+        results = run_gate(workspace, gates)
+        if not all(r.ok for r in results):
+            errors.append(f"candidate {i}: {gate_feedback(results)[:200]}")
+            if snapshot is not None:
+                snapshot.restore()
+            continue
+
+        try:
+            value = scorer(workspace)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"candidate {i}: scorer raised {type(e).__name__}: {e}")
+            value = None
+        if value is not None and (best is None or value < best[0]):
+            best = (float(value), edit)
+        if value is not None and baseline is not None and value >= baseline:
+            errors.append(f"candidate {i}: scored {value:g}, no better than {baseline:g}")
+        if snapshot is not None:
+            snapshot.restore()
+
+    if best is None:
+        return StepResult(step, False, calls, 0, kinds, "; ".join(errors[:3]))
+    if baseline is not None and best[0] >= baseline:
+        return StepResult(
+            step,
+            False,
+            calls,
+            0,
+            kinds,
+            f"no candidate improved on the current {baseline:g}; best was {best[0]:g}. "
+            f"The work is unchanged.",
+        )
+
+    # Re-apply the winner onto the clean tree the loop left behind.
+    if snapshot is not None:
+        snapshot.save()
+    apply_edit(workspace, best[1])
+    autofix(workspace, best[1].path)
+    return StepResult(step, True, calls, 0, kinds)
 
 
 def _read_slice(workspace: Path, path: str, limit: int = 12000, step: Step | None = None) -> str:
