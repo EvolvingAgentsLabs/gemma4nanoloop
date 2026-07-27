@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from . import anchors, calllog
 from .anchors import AnchorError
+from .budget import BudgetExhausted
 
 # ---------------------------------------------------------------------------
 # Typed plan (D2)
@@ -643,6 +644,11 @@ def build_step(
         try:
             edit = propose(step, ctx.render(), feedback, temperature)
             calls += 1
+        except BudgetExhausted:
+            # Must escape: swallowing this would turn "stop spending" into a
+            # repair attempt, which immediately tries to spend again. The whole
+            # point of a budget is that it ends the work.
+            raise
         except Exception as e:  # noqa: BLE001
             calls += 1
             return False, f"the model did not return a valid Edit: {e}"
@@ -1011,6 +1017,7 @@ REQUIRE_CHECKS = os.environ.get("NANOLOOP_REQUIRE_CHECKS", "0").lower() in ("1",
 
 @dataclass
 class GoalResult:
+    gave_up: str = ""  # non-empty when a budget stopped the work
     plans: list[Plan] = field(default_factory=list)
     steps: list[StepResult] = field(default_factory=list)
     unmet: list[str] = field(default_factory=list)
@@ -1019,7 +1026,7 @@ class GoalResult:
 
     @property
     def ok(self) -> bool:
-        return not self.unmet and all(r.ok for r in self.steps)
+        return not self.gave_up and not self.unmet and all(r.ok for r in self.steps)
 
 
 def run_goal(
@@ -1054,14 +1061,24 @@ def run_goal(
 
     for round_no in range(max_replans + 1):
         out.rounds = round_no + 1
-        plan = plan_fn(goal, repomap.build(workspace), gaps or None)
+        try:
+            plan = plan_fn(goal, repomap.build(workspace), gaps or None)
+        except BudgetExhausted as e:
+            # Not a failure of the work — a decision to stop. Recorded as such
+            # so a report can tell "I could not" from "I ran out".
+            out.gave_up = str(e)
+            return out
         plan, dropped = normalize_plan(plan, workspace)
         out.plan_fixes.extend(dropped)
         out.plans.append(plan)
         if on_plan:
             on_plan(round_no, plan, gaps)
 
-        results = run_plan(plan, goal, workspace, propose, gates=gates, on_step=on_step, **kw)
+        try:
+            results = run_plan(plan, goal, workspace, propose, gates=gates, on_step=on_step, **kw)
+        except BudgetExhausted as e:
+            out.gave_up = str(e)
+            return out
         out.steps.extend(results)
 
         # Criteria carry over: a second plan may drop or reword them, and the

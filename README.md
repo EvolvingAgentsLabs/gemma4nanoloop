@@ -91,7 +91,9 @@ python -m nanoloop.main run "add a by_tag(tag) method to Store" \
 ```
 
 Useful flags: `--max-replans N`, `--skip-preflight`, `--n-candidates N`,
-`--snapshot copy|git`. Env: `NANOLOOP_BACKEND=ollama|litert|aistudio`,
+`--snapshot copy|git`, and a per-task budget: `--max-calls N`, `--max-seconds N`,
+`--max-tokens N` (running out is reported as "stopped on budget", not as a
+failure of the work). Env: `NANOLOOP_BACKEND=ollama|litert|aistudio`,
 `NANOLOOP_REQUIRE_CHECKS=1` (a criterion with no check counts as unmet).
 
 ## Eval harness

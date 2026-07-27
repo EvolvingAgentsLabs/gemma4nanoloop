@@ -44,6 +44,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from . import budget as budget_mod
 from . import calllog
 
 try:  # .env is gitignored; the AI Studio key lives there, never in the repo.
@@ -310,6 +311,11 @@ def chat(
     logged separately — if it is ever non-zero unexpectedly, that alone explains
     a latency regression.
     """
+    # Before the call, never after: starting work the budget cannot cover
+    # wastes the most expensive thing in the loop. Raises BudgetExhausted,
+    # which the crew turns into a reported outcome rather than a crash.
+    budget_mod.check()
+
     _, model_name = _endpoint()
     caller = _call_native if BACKEND == "ollama" else _call_openai
 
@@ -321,6 +327,7 @@ def chat(
     except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
         err = f"{type(e).__name__}: {e}"
     latency_ms = int((time.monotonic() - t0) * 1000)
+    budget_mod.spend((usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0))
 
     calllog.record(
         calllog.CallRecord(

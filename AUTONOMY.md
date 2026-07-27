@@ -142,12 +142,24 @@ que los tests no cazan porque en runtime da igual.
 Un crew autónomo necesita presupuesto y necesita **rendirse bien**. Hoy solo
 está acotado el replan.
 
-- **Presupuesto por tarea** (llamadas, tokens, reloj). Al agotarse: parar y
-  reportar, no seguir.
-- **Rendirse es un resultado válido.** Una tarea que devuelve *"no pude, esto es
-  lo que intenté, aquí está el error exacto"* vale mucho más que una que
-  entrega código dudoso. Ya tenemos el hábito: los gates y el snapshot impiden
-  que lo roto llegue a disco.
+- **Presupuesto por tarea** ✅ `--max-calls`, `--max-seconds`, `--max-tokens`.
+  Se comprueba **antes** de cada llamada, nunca después: empezar trabajo que no
+  puedes pagar desperdicia lo más caro del bucle.
+- **Rendirse es un resultado válido** ✅. El reporte lo marca como
+  **"stopped on budget"**, distinto de un criterio incumplido: uno le dice al
+  revisor *sube el límite*, el otro *la tarea puede estar mal o ser demasiado
+  difícil*.
+
+Probado con `--max-calls 1` (imposible de cumplir): se rinde sin traceback,
+**0 commits**, y el reporte explica exactamente en qué se gastó. Con
+`--max-calls 10`: 1/1 resuelta.
+
+Un bug que costó encontrar y merece recordarse: `BudgetExhausted` heredaba de
+`RuntimeError`, y el retry del planner captura `RuntimeError` para fallos
+transitorios. **"Deja de gastar" era indistinguible de "reinténtalo"** — el
+planner quemó tres llamadas más y reportó un falso *"no valid plan in 3
+attempts"*. Ahora hereda de `Exception` a secas: una excepción que significa
+PARAR no puede ser capturable por un handler que significa REINTENTAR.
 - **Memoria de fallos.** `memory.py` + recall semántico están montados y **el
   loop no los usa**. Un crew que falla tres veces igual debería recordarlo:
   *"esta clase de tarea no me sale"* es información de primera.
@@ -176,7 +188,7 @@ Anti-patrones que suenan a autonomía y son retrocesos:
 |---|---|---|
 | ~~1~~ | ~~`harvest`~~ ✅ **hecho** — tareas desde pytest/mypy/ruff | elimina los dos eslabones débiles a la vez |
 | ~~2~~ | ~~entregable = rama + PR~~ ✅ **hecho** | hace la supervisión asíncrona |
-| 3 | presupuesto por tarea + rendirse como resultado | sin esto, autónomo = descontrolado |
+| ~~3~~ | ~~presupuesto por tarea + rendirse~~ ✅ **hecho** | sin esto, autónomo = descontrolado |
 | 4 | memoria de fallos alimentando el planner | deja de repetir el mismo error |
 | 5 | G4: medir de verdad la creación de ficheros | es el único límite real *del modelo* |
 

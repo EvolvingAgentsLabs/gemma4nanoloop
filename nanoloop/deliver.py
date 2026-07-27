@@ -167,6 +167,11 @@ class Delivery:
             for s in failed:
                 out.append(f"### {s['goal_line']}")
                 out.append(f"- source: `{s['source']}`  file: `{s['target_file']}`")
+                if s.get("gave_up"):
+                    # A budget stop and a genuine failure need different
+                    # responses from a reviewer: one says raise the limit, the
+                    # other says the task may be wrong or too hard.
+                    out.append(f"- **stopped on budget**: {s['gave_up']}")
                 if s.get("unmet"):
                     out.append("- unmet criteria:")
                     out += [f"  - {u}" for u in s["unmet"]]

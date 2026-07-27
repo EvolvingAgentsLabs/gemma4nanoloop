@@ -131,7 +131,15 @@ def cmd_run(args) -> int:
 
     con.print(f"[plan] {args.goal}")
 
+    from . import budget as budget_mod
     from . import snapshot as snap_mod
+
+    task_budget = budget_mod.Budget(
+        max_calls=getattr(args, "max_calls", 0),
+        max_seconds=getattr(args, "max_seconds", 0.0),
+        max_tokens=getattr(args, "max_tokens", 0),
+    )
+    budget_mod.set_active(task_budget.reset())
 
     snap = snap_mod.make(workspace, args.snapshot)
     catalog = skills.catalog_text()
@@ -207,6 +215,8 @@ def cmd_run(args) -> int:
     if not approved["ok"]:
         return 2
 
+    if result.gave_up:
+        con.print(f"[budget] GAVE UP — {result.gave_up}")
     if result.unmet:
         con.print(
             f"[acceptance] {len(result.unmet)} criterion(s) NOT met after {result.rounds} round(s):"
@@ -233,7 +243,9 @@ def cmd_run(args) -> int:
         f"[done] {sum(r.ok for r in result.steps)}/{len(result.steps)} steps, "
         f"{result.rounds} plan round(s), "
         f"{sum(r.model_calls for r in result.steps)} model calls"
+        f" | budget: {task_budget.summary()}"
     )
+    budget_mod.set_active(None)
     if getattr(args, "_collect", None) is not None:
         args._collect.append(result)
     return 0 if ok else 1
@@ -301,6 +313,9 @@ def cmd_harvest(args) -> int:
                 max_replans=args.max_replans,
                 accept="",
                 skip_preflight=True,
+                max_calls=args.max_calls,
+                max_seconds=args.max_seconds,
+                max_tokens=args.max_tokens,
                 _criteria=t.acceptance,
             )
         )
@@ -333,6 +348,7 @@ def cmd_harvest(args) -> int:
                 "rounds": res.rounds if res else 0,
                 "anchors": [k for r in (res.steps if res else []) for k in r.anchor_kinds],
                 "plan_fixes": list(res.plan_fixes) if res else [],
+                "gave_up": res.gave_up if res else "",
             }
         )
         if delivery:
@@ -410,6 +426,27 @@ def cli(argv: list[str] | None = None) -> int:
         dest="max_replans",
         help="extra planning rounds when acceptance criteria are unmet",
     )
+    sr.add_argument(
+        "--max-calls",
+        type=int,
+        default=0,
+        dest="max_calls",
+        help="stop the task after N model calls (0 = no limit)",
+    )
+    sr.add_argument(
+        "--max-seconds",
+        type=float,
+        default=0.0,
+        dest="max_seconds",
+        help="stop the task after N seconds (0 = no limit)",
+    )
+    sr.add_argument(
+        "--max-tokens",
+        type=int,
+        default=0,
+        dest="max_tokens",
+        help="stop the task after N tokens (0 = no limit)",
+    )
     sr.set_defaults(fn=cmd_run)
 
     sh = sub.add_parser("harvest", help="read work off the repo's failing signals")
@@ -423,6 +460,27 @@ def cli(argv: list[str] | None = None) -> int:
         "--n-candidates", type=int, default=crew.DEFAULT_N_CANDIDATES, dest="n_candidates"
     )
     sh.add_argument("--max-replans", type=int, default=crew.MAX_REPLANS, dest="max_replans")
+    sh.add_argument(
+        "--max-calls",
+        type=int,
+        default=0,
+        dest="max_calls",
+        help="stop the task after N model calls (0 = no limit)",
+    )
+    sh.add_argument(
+        "--max-seconds",
+        type=float,
+        default=0.0,
+        dest="max_seconds",
+        help="stop the task after N seconds (0 = no limit)",
+    )
+    sh.add_argument(
+        "--max-tokens",
+        type=int,
+        default=0,
+        dest="max_tokens",
+        help="stop the task after N tokens (0 = no limit)",
+    )
     sh.add_argument(
         "--deliver",
         action="store_true",
