@@ -26,6 +26,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -269,6 +270,79 @@ def run_gate(cwd: Path | str, gates: list[str] | None = None) -> list[GateResult
         if res.failed:
             break  # first failure is the actionable one; the rest is noise
     return results
+
+
+@dataclass
+class Preflight:
+    ok: bool
+    skipped: bool = False
+    reason: str = ""
+    failures: list[GateResult] = field(default_factory=list)
+
+    def report(self) -> str:
+        if self.skipped:
+            return f"[preflight] skipped — {self.reason}"
+        if self.ok:
+            return "[preflight] repo starts green"
+        lines = [f"[preflight] FAILED — {self.reason}"]
+        for f in self.failures:
+            lines.append(f"  `{f.command}`:\n{f.output}")
+        return "\n".join(lines)
+
+
+def preflight(workspace: Path | str, gates: list[str] | None = None) -> Preflight:
+    """Refuse to start work in a repo that is already broken.
+
+    The repair loop cannot tell "my edit was wrong" from "this repo was already
+    red". Both arrive as identical gate output, so a pre-existing failure gets
+    fed back to the model, which burns its attempts trying to fix something no
+    edit of its could. That is not hypothetical: a missing `ruff` on PATH cost a
+    whole run — 4 model calls, every anchor exact, every attempt doomed.
+
+    Two cases are NOT failures and must not block:
+      - an empty workspace: scaffolding from nothing is a legitimate goal, and
+        `pytest` rightly fails when there are no tests yet
+      - no Python at all: there is nothing for these gates to say
+    """
+    workspace = Path(workspace)
+    if gates is None:
+        gates = DEFAULT_GATES
+
+    py = [
+        p
+        for p in workspace.rglob("*.py")
+        if not any(part in {".venv", "venv", "__pycache__", ".git"} for part in p.parts)
+    ]
+    if not py:
+        return Preflight(ok=True, skipped=True, reason="no Python files yet (scaffolding)")
+
+    env = _gate_env()
+    missing = []
+    for cmd in gates:
+        tool = cmd.split()[0]
+        if tool in {"python", sys.executable}:
+            continue
+        if shutil.which(tool, path=env["PATH"]) is None:
+            missing.append(tool)
+    if missing:
+        return Preflight(
+            ok=False,
+            reason=(
+                f"tooling not on PATH: {', '.join(sorted(set(missing)))}. "
+                f"Install it in the environment running the crew — a missing tool "
+                f"looks exactly like a failing edit to the repair loop."
+            ),
+        )
+
+    results = run_gate(workspace, gates)
+    failed = [r for r in results if r.failed]
+    if failed:
+        return Preflight(
+            ok=False,
+            reason="the repo does not pass its own gates before any change",
+            failures=failed,
+        )
+    return Preflight(ok=True)
 
 
 def gate_feedback(results: list[GateResult]) -> str:

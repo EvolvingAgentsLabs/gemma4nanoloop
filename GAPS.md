@@ -180,7 +180,7 @@ y abortar si no.
 
 ---
 
-## G7. Supuestos del entorno — 🟡 fácil, pero hay que hacerlo
+## ~~G7~~. Supuestos del entorno — ✅ CERRADO (parcialmente)
 
 - Los gates asumen `ruff` + `pytest` configurados. En un repo sin ellos, el primer
   gate falla y el loop gasta reparaciones en algo que ningún edit arregla — ya nos
@@ -189,8 +189,32 @@ y abortar si no.
   nueva, no hay camino.
 - `DEFAULT_GATES` está cableado a Python. Otro lenguaje = otra configuración.
 
-**Qué haría:** un `preflight` que verifique gates verdes en el repo destino antes
-del primer plan, y falle claro si no. Barato y evita una clase entera de ruido.
+**HECHO** lo principal. `crew.preflight()` corre antes del primer plan y se niega
+a empezar si el repo ya está roto, distinguiendo dos causas que necesitan
+respuestas distintas:
+
+```
+tool ausente -> tooling not on PATH: eslint. Install it in the environment...
+repo rojo    -> the repo does not pass its own gates before any change
+```
+
+Y **no** bloquea dos casos que son legítimos: workspace vacío (scaffolding desde
+cero — la demo de FastAPI empieza justo ahí) y repos sin Python.
+
+Verificado con el CLI:
+
+```
+repo con un test roto     -> exit 3, 0 llamadas al modelo
+workspace vacío           -> skipped, sigue y scaffoldea (0 llamadas, skill)
+```
+
+Lo de las **0 llamadas** es el punto: antes ese repo habría gastado reparaciones
+peleando con un fallo que ningún edit suyo podía arreglar.
+
+`--skip-preflight` para saltarlo a sabiendas.
+
+**Sigue pendiente de G7:** el crew no puede instalar dependencias, y
+`DEFAULT_GATES` sigue cableado a Python.
 
 ---
 

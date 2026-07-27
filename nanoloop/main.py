@@ -117,6 +117,18 @@ def cmd_run(args) -> int:
     if args.interactive:
         os.environ["HARNESS_HITL"] = "1"
 
+    # Before anything: is this repo even sane? A pre-existing failure is
+    # indistinguishable from a bad edit once the repair loop sees it.
+    if not args.skip_preflight:
+        pf = crew.preflight(workspace, None if not args.no_gates else [])
+        con.print(pf.report())
+        if not pf.ok:
+            con.print(
+                "[preflight] refusing to start. Fix the repo (or pass "
+                "--skip-preflight if you know what you are doing)."
+            )
+            return 3
+
     con.print(f"[plan] {args.goal}")
 
     from . import snapshot as snap_mod
@@ -248,6 +260,12 @@ def cli(argv: list[str] | None = None) -> int:
     sr.add_argument("--snapshot", default="copy", choices=["copy", "git"])
     sr.add_argument(
         "--n-candidates", type=int, default=crew.DEFAULT_N_CANDIDATES, dest="n_candidates"
+    )
+    sr.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        dest="skip_preflight",
+        help="start even if the repo does not pass its own gates",
     )
     sr.add_argument(
         "--accept",
