@@ -90,11 +90,66 @@ python -m nanoloop.main run "add a by_tag(tag) method to Store" \
   "check": "from todo.store import Store\ns = Store()\ns.add('a', ['x'])\nassert [i.title for i in s.by_tag('x')] == ['a']\n"}]
 ```
 
+```bash
+# Score every candidate and keep the BEST, instead of the first that passes
+python -m nanoloop.main run "make it faster" --workspace repo \
+    --optimize scorer.py --n-candidates 3
+```
+
+`scorer.py` defines `score(workspace) -> float | None`, lower is better. This
+inverts the economics on purpose: a bug fix stops at the first correct
+candidate, an optimisation has no such stopping point, so a scored run always
+spends `--n-candidates` calls and keeps the best that beats the incumbent.
+
 Useful flags: `--max-replans N`, `--skip-preflight`, `--n-candidates N`,
 `--snapshot copy|git`, and a per-task budget: `--max-calls N`, `--max-seconds N`,
 `--max-tokens N` (running out is reported as "stopped on budget", not as a
 failure of the work). Env: `NANOLOOP_BACKEND=ollama|litert|aistudio`,
 `NANOLOOP_REQUIRE_CHECKS=1` (a criterion with no check counts as unmet).
+
+## Examples
+
+Two worked examples live in `examples/`, both built around quantum circuits —
+not because the crew is a quantum tool, but because quantum software has
+unusually good **oracles**, and an oracle is what this project argues autonomy
+is actually limited by.
+
+### `examples/quantum-circuit-opt` — acceptance criteria with an exact oracle
+
+The best acceptance criterion in the repo. Dual and mathematically decidable:
+
+```python
+assert Operator(prepare_state()).equiv(Operator(ref))   # same unitary
+assert qc.count_ops().get("cx", 0) <= 1                 # and fewer gates
+```
+
+No stub can satisfy it. Reliability is **not** the same on both models, and the
+difference is worth knowing before you trust it:
+
+| model | result |
+|---|---|
+| `gemma-4-26b` (cloud) | solved, 3 model calls, 26 s |
+| `gemma4:12b` (local) | **2 of 3 runs solved**; the third exhausted its budget with the circuit untouched |
+
+### `examples/quantum-evolve` — an AlphaEvolve-shaped loop
+
+`propose N → score all → keep the best → repeat`, with unitary equivalence as a
+hard gate and gate count as the gradient. The selection strategy it demonstrates
+is now available in the crew itself as `run --optimize`.
+
+| model | result | optimum |
+|---|---|---|
+| `gemma-4-26b` (cloud) | **10 → 3 gates**, matching `transpile(optimization_level=3)` | 3 |
+| `gemma4:12b` (local) | 9 → 7, then plateaus | 3 |
+
+**This is the only place in the project where model size measurably mattered.**
+Everywhere else the 12B and the 26B tied — anchor-hit 100% both. Searching a
+space of rewrites is a different task from applying a named rule to a named
+error.
+
+And the honest caveat, in the example's own README: Qiskit's transpiler does the
+same optimisation in **17 ms** with guarantees. The pattern is what transfers —
+to problems that have no transpiler.
 
 ## Eval harness
 
@@ -129,14 +184,15 @@ nanoloop/
   deliver.py        branch + commit per task + report generated from the log
   budget.py         per-task ceiling; running out is a result, not a crash
   failmem.py        what failed before, superseded by any later success
-  session.py memory.py skills.py frontmatter.py tools.py    (from nanoLoop)
 Skills/             scaffold-fastapi, add-endpoint, setup-pytest
+examples/           quantum-circuit-opt (oracles), quantum-evolve (scored search)
+  session.py memory.py skills.py frontmatter.py tools.py    (from nanoLoop)
 eval/               fixtures, measurement harnesses, fixture-repo
 ```
 
 ## Status
 
-**205 tests green**, `ruff check` and `ruff format --check` clean. Everything
+**275 tests green**, `ruff check` and `ruff format --check` clean. Everything
 below was measured against a live model, not reasoned about.
 
 | | |
@@ -150,6 +206,7 @@ below was measured against a live model, not reasoned about.
 | replan after an unmet criterion | 2 rounds, criterion satisfied |
 | **harvest: fix a failing test unsupervised** | **1/1 solved, 1 model call** — no goal or criteria written by hand |
 | semantic recall@1 vs keyword | **0.850 vs 0.000** (recall@5 saturates 1.0/1.0) |
+| quantum circuit optimisation | 10 → 3 gates (26B); 9 → 7 (12B) — see Examples |
 | latency per call | ~30 s local (12B) / ~4 s cloud (26B) |
 | reasoning tokens per call | **0** — see below |
 

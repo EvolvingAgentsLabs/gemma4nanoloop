@@ -16,12 +16,27 @@ decidible) más mejora (conteo de compuertas). Ninguna de las dos mitades admite
 opinión, y un stub no puede satisfacerlas. Es exactamente la forma que
 `AUTONOMY.md` argumenta que necesita la autonomía.
 
-Corrida real (`gemma-4-26b-a4b-it`):
+## Fiabilidad, por modelo
+
+| modelo | resultado |
+|---|---|
+| `gemma-4-26b-a4b-it` (cloud) | resuelto: 2/2 pasos, 3 llamadas, 26 s |
+| `gemma4:12b` (local) | **2 de 3 corridas** resueltas; la tercera agotó el presupuesto con el circuito intacto |
 
 ```
-2/2 pasos, 1 ronda, 3 llamadas, 26 s
 cx: 3 -> 1     x: 2 -> 0     profundidad: 6 -> 3     unitario idéntico
 ```
+
+El 12B es **inconsistente** en esta tarea. Cuando acierta, el resultado es
+exactamente el mismo que el del 26B; cuando no, gasta el presupuesto sin tocar
+nada y lo reporta como fallo, que es el comportamiento correcto. Si vas a
+depender de esto, súbele `--n-candidates` o corre contra el modelo mayor.
+
+Un bug que salió midiendo justo esto: una corrida **logró el objetivo** —criterio
+cumplido, tests verdes, circuito reducido— y aun así salió con `exit 1`, porque un
+paso posterior no encontró nada más que quitar. Bajo `harvest --deliver` eso
+descarta trabajo terminado en vez de commitearlo. Arreglado: un criterio cumplido
+manda sobre un paso fallido, porque los criterios **son** la definición de hecho.
 
 ## Lo que NO demuestra, y conviene decirlo
 
