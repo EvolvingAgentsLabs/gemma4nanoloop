@@ -97,6 +97,33 @@ Dos cosas que hubo que aprender construyéndolo, ambas descubiertas ejecutando:
    Una optimización que no optimiza es un fallo, no un éxito plano. Ahora se
    mide el baseline antes y un candidato que no lo bate no gana.
 
+## 12B local vs 26B cloud: la primera vez que el tamaño importa
+
+Corrido de punta a punta con `run --optimize` contra los dos backends:
+
+| modelo | resultado | óptimo |
+|---|---|---|
+| `gemma-4-26b` (cloud) | **10 → 3** compuertas, iguala al transpilador | 3 |
+| `gemma4:12b` (local) | **9 → 7**, luego se planta | 3 |
+
+El 12B quitó los `h` redundantes y dejó intactos `cx×3` y `x×2`. Correcto —el
+unitario se conserva— pero incompleto. Repetido dos veces más, ningún candidato
+mejoró sobre 7 y el paso falló, que es el baseline haciendo su trabajo en vez de
+reportar un éxito plano.
+
+**Esto importa más allá del ejemplo.** En todo el resto del proyecto el 12B y el
+26B empataron: anchor-hit 100% los dos, y el A/B concluyó que un modelo mayor no
+compraba calidad. La optimización es **el primer sitio donde el tamaño del modelo
+se mide de verdad**. Tiene sentido: buscar en un espacio de reescrituras es otra
+tarea que aplicar una regla nombrada a un error nombrado.
+
+## Nota sobre el backend
+
+Las corridas contra AI Studio se degradaron tras un día de uso: ~180 s por
+llamada y respuestas vacías, cuando por la mañana tardaban 4 s. El `probe`
+seguía respondiendo, así que era throttling, no caída. El 12B local no tiene ese
+problema y es el objetivo real del proyecto.
+
 ## Correrlo
 
 ```bash
