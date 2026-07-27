@@ -9,11 +9,16 @@ python discover.py
 A fly gene called `eyeless` and a human disease called `aniridia`. The names
 share **nothing**. The sequences share **133 residues at 93% identity**:
 
+![59 of 60 residues identical between fly and human](../../docs/img/alignment.png)
+
 ```
     fly    HSGVNQLGGVFVGGRPLPDSTRQKIVELAHSGARPCDISRILQVSNGCVSKILGRYYETG
            |||||||||||| |||||||||||||||||||||||||||||||||||||||||||||||
     human  HSGVNQLGGVFVNGRPLPDSTRQKIVELAHSGARPCDISRILQVSNGCVSKILGRYYETG
 ```
+
+*(rendered by `tools/render_alignment.py` from the vendored sequences — every
+character comes from the data)*
 
 One difference in sixty positions, between two lineages separated by roughly
 600 million years.
