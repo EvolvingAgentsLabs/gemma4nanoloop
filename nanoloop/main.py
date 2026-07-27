@@ -155,7 +155,14 @@ def cmd_run(args) -> int:
         )
 
     def _plan_fn(goal, repo_map, gaps):
-        plan = propose_plan(goal, repo_map, gaps=gaps)
+        from . import failmem
+
+        # Only on the first pass: within a run, `gaps` already says what is
+        # missing, and adding old failures on top would just crowd the prompt.
+        past = failmem.render(goal) if not gaps else ""
+        if past:
+            con.print(f"[memory] {past.count(chr(10) + '-')} past failure(s) inform this plan")
+        plan = propose_plan(goal, repo_map, gaps=gaps, lessons=past)
         # Yours win outright. The planner has been observed inventing criteria
         # and forgetting others; "done" is the one judgement worth keeping.
         if user_criteria:
@@ -246,6 +253,17 @@ def cmd_run(args) -> int:
         f" | budget: {task_budget.summary()}"
     )
     budget_mod.set_active(None)
+
+    from . import failmem
+
+    failmem.record(
+        failmem.Attempt(
+            goal=args.goal,
+            target_file=(result.steps[0].step.target_file if result.steps else ""),
+            outcome="solved" if ok else ("gave_up" if result.gave_up else "unmet"),
+            detail=result.gave_up or ("; ".join(result.unmet) if result.unmet else ""),
+        )
+    )
     if getattr(args, "_collect", None) is not None:
         args._collect.append(result)
     return 0 if ok else 1

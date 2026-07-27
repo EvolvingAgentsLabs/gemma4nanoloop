@@ -160,9 +160,30 @@ transitorios. **"Deja de gastar" era indistinguible de "reinténtalo"** — el
 planner quemó tres llamadas más y reportó un falso *"no valid plan in 3
 attempts"*. Ahora hereda de `Exception` a secas: una excepción que significa
 PARAR no puede ser capturable por un handler que significa REINTENTAR.
-- **Memoria de fallos.** `memory.py` + recall semántico están montados y **el
-  loop no los usa**. Un crew que falla tres veces igual debería recordarlo:
-  *"esta clase de tarea no me sale"* es información de primera.
+- **Memoria de fallos** ✅ `failmem.py`. Cada intento queda registrado
+  (`solved` / `unmet` / `gave_up` + el motivo exacto) y los fallos relevantes se
+  inyectan en el prompt del planner en la primera pasada.
+
+  **Lo delicado no es guardar, es la obsolescencia.** Un fallo recordado que ya
+  se arregló es *peor* que no tener memoria: le dice al planner que evite algo
+  que ahora funciona, y a diferencia de una memoria ausente, una equivocada
+  dirige activamente. Por eso **todo éxito posterior invalida** los fallos del
+  mismo trabajo, y nada que un éxito haya contradicho vuelve a recordarse.
+
+  Verificado en vivo: corrida 1 con `--max-calls 1` → `gave_up` registrado;
+  corrida 2 con presupuesto suficiente → resuelto, 3 tests verdes; después, la
+  lección desaparece por superseded.
+
+  Un bug del camino: la huella del objetivo se comparaba por **igualdad exacta**
+  de conjuntos de palabras, así que *"add by_tag to Store"* no reconocía su
+  propio fallo registrado como *"implement by_tag(tag) on Store"* — una palabra
+  de más y la memoria era ciega. Ahora se compara por **solapamiento**, que es lo
+  que hace que una huella "lossy" sea de verdad lossy.
+
+  Se guarda como JSONL, no como notas del grafo de conocimiento: un intento es un
+  registro estructurado que se consulta por fichero exacto, no prosa para buscar
+  semánticamente. `memory.py` sigue siendo el sitio de los hechos durables del
+  proyecto; esto es una caja negra de vuelo.
 
 ---
 
@@ -189,7 +210,7 @@ Anti-patrones que suenan a autonomía y son retrocesos:
 | ~~1~~ | ~~`harvest`~~ ✅ **hecho** — tareas desde pytest/mypy/ruff | elimina los dos eslabones débiles a la vez |
 | ~~2~~ | ~~entregable = rama + PR~~ ✅ **hecho** | hace la supervisión asíncrona |
 | ~~3~~ | ~~presupuesto por tarea + rendirse~~ ✅ **hecho** | sin esto, autónomo = descontrolado |
-| 4 | memoria de fallos alimentando el planner | deja de repetir el mismo error |
+| ~~4~~ | ~~memoria de fallos~~ ✅ **hecho** | deja de repetir el mismo error |
 | 5 | G4: medir de verdad la creación de ficheros | es el único límite real *del modelo* |
 
 Con 1+2+3 esto pasa de "ejecutor supervisado" a algo que se le puede soltar en un

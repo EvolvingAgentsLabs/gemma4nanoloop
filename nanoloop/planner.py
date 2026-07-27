@@ -97,6 +97,7 @@ def propose_plan(
     num_ctx: int | None = None,
     skills_catalog: str | None = None,
     gaps: list[str] | None = None,
+    lessons: str = "",
 ) -> Plan:
     """Returns a schema-valid Plan or raises.
 
@@ -115,6 +116,10 @@ def propose_plan(
         # The repo map is rebuilt before this call, so it already reflects the
         # work done so far — that is what lets a second pass avoid redoing it.
         user += REPLAN.format(gaps="\n".join(f"- {g}" for g in gaps))
+    if lessons:
+        # What failed on previous RUNS, as opposed to previous rounds of this
+        # one. Only failures no later success has superseded reach here.
+        user += lessons
     # Greedy first (D7), then retry WITH TEMPERATURE.
     #
     # A greedy sample can fall into degenerate repetition and never escape:

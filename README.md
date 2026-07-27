@@ -126,6 +126,9 @@ nanoloop/
   recall.py         EmbeddingGemma semantic recall over ./Memory
   repomap.py        file tree + docstring + defined symbols per file
   harvest.py        tasks read off failing pytest/mypy/ruff, oracle attached
+  deliver.py        branch + commit per task + report generated from the log
+  budget.py         per-task ceiling; running out is a result, not a crash
+  failmem.py        what failed before, superseded by any later success
   session.py memory.py skills.py frontmatter.py tools.py    (from nanoLoop)
 Skills/             scaffold-fastapi, add-endpoint, setup-pytest
 eval/               fixtures, measurement harnesses, fixture-repo
