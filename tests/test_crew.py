@@ -629,3 +629,128 @@ def test_checkless_criterion_is_unmet_under_require_checks(tmp_path, monkeypatch
 def test_a_hanging_check_times_out(tmp_path, monkeypatch):
     monkeypatch.setattr(crew, "ACCEPTANCE_TIMEOUT", 2)
     assert "timed out" in crew.run_check(tmp_path, "while True:\n    pass\n", 0)
+
+
+# --- G3: plan normalisation --------------------------------------------------
+
+
+def test_duplicate_step_creating_the_same_symbol_is_dropped():
+    """Observed: one run emitted two identical "Add tests… tests/test_tags.py"
+    steps. A redundant step spends calls and adds another chance to fail."""
+    plan = Plan(
+        steps=[
+            Step(title="Add tests", target_file="t.py", intent="i", defines="test_x"),
+            Step(title="Add tests again", target_file="t.py", intent="i", defines="test_x"),
+        ]
+    )
+    cleaned, dropped = crew.normalize_plan(plan)
+    assert len(cleaned.steps) == 1 and len(dropped) == 1
+
+
+def test_two_real_changes_to_one_file_are_kept():
+    """The false-merge risk: a dropped step silently loses work."""
+    plan = Plan(
+        steps=[
+            Step(title="make add() accept tags", target_file="s.py", intent="i"),
+            Step(title="make complete() case-insensitive", target_file="s.py", intent="i"),
+        ]
+    )
+    cleaned, dropped = crew.normalize_plan(plan)
+    assert len(cleaned.steps) == 2 and dropped == []
+
+
+def test_identical_titles_are_deduped():
+    plan = Plan(
+        steps=[
+            Step(title="Add  by_tag ", target_file="s.py", intent="i"),
+            Step(title="add by_tag", target_file="s.py", intent="i"),
+        ]
+    )
+    assert len(crew.normalize_plan(plan)[0].steps) == 1
+
+
+def test_same_symbol_in_different_files_is_not_a_duplicate():
+    plan = Plan(
+        steps=[
+            Step(title="a", target_file="x.py", intent="i", defines="helper"),
+            Step(title="b", target_file="y.py", intent="i", defines="helper"),
+        ]
+    )
+    assert len(crew.normalize_plan(plan)[0].steps) == 2
+
+
+def test_acceptance_survives_normalisation():
+    plan = Plan(
+        steps=[Step(title="a", target_file="x.py", intent="i")],
+        acceptance=[crew.Acceptance(symbol="f", file="x.py")],
+    )
+    assert crew.normalize_plan(plan)[0].acceptance == plan.acceptance
+
+
+def test_dropped_steps_are_reported_on_the_result(tmp_path):
+    (tmp_path / "s.py").write_text("X = 1\n")
+
+    def plan_fn(goal, repo_map, gaps):
+        return Plan(
+            steps=[
+                Step(title="dup", target_file="s.py", intent="i", defines="f"),
+                Step(title="dup2", target_file="s.py", intent="i", defines="f"),
+            ]
+        )
+
+    res = crew.run_goal(
+        "g",
+        tmp_path,
+        plan_fn,
+        lambda *a: Edit(path="s.py", anchor="X = 1", replacement="def f():\n    return 1\n"),
+        gates=["true"],
+        max_replans=0,
+    )
+    assert res.plan_fixes
+
+
+# --- G3: broken target paths -------------------------------------------------
+
+
+def test_nonexistent_directory_snaps_to_the_only_matching_file(tmp_path):
+    """The planner emits broken paths CONSISTENTLY: `todo wrong/store.py` on 8
+    runs out of 8. Left alone the step CREATES a phantom file, the symbol lands
+    where no criterion looks, and a replan round is spent rediscovering it."""
+    (tmp_path / "todo").mkdir()
+    (tmp_path / "todo" / "store.py").write_text("X = 1\n")
+    fixed, note = crew.resolve_target(tmp_path, "todo wrong/store.py")
+    assert fixed == "todo/store.py"
+    assert "does not exist" in note
+
+
+def test_existing_path_is_untouched(tmp_path):
+    (tmp_path / "m.py").write_text("X = 1\n")
+    assert crew.resolve_target(tmp_path, "m.py") == ("m.py", "")
+
+
+def test_new_file_in_an_existing_directory_is_allowed(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    assert crew.resolve_target(tmp_path, "pkg/brand_new.py") == ("pkg/brand_new.py", "")
+
+
+def test_ambiguous_basename_is_left_alone_to_fail_loudly(tmp_path):
+    """A wrong snap edits the wrong file — worse than failing."""
+    for d in ("a", "b"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "shared.py").write_text("X = 1\n")
+    fixed, note = crew.resolve_target(tmp_path, "nowhere/shared.py")
+    assert fixed == "nowhere/shared.py" and note == ""
+
+
+def test_normalize_plan_repairs_paths_when_given_a_workspace(tmp_path):
+    (tmp_path / "todo").mkdir()
+    (tmp_path / "todo" / "store.py").write_text("X = 1\n")
+    plan = Plan(steps=[Step(title="t", target_file="todo wrong/store.py", intent="i")])
+    cleaned, notes = crew.normalize_plan(plan, tmp_path)
+    assert cleaned.steps[0].target_file == "todo/store.py"
+    assert notes
+
+
+def test_normalize_plan_without_a_workspace_leaves_paths_alone():
+    plan = Plan(steps=[Step(title="t", target_file="weird/x.py", intent="i")])
+    assert crew.normalize_plan(plan)[0].steps[0].target_file == "weird/x.py"

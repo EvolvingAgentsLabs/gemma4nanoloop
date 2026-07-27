@@ -12,6 +12,7 @@ does badly.
 - **`IMPLEMENTATION.md`** — order of work, verified ground truth, measured findings.
 - **`GAPS.md`** — what is still missing for a real task, measured and prioritised.
 - **`NEXT-STEPS.md`** — where it was left, what to do next, and the traps that already cost hours.
+- **`AUTONOMY.md`** — the thesis for getting from supervised executor to something you can leave alone.
 
 ## The core idea
 

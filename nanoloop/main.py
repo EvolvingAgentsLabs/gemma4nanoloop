@@ -223,6 +223,10 @@ def cmd_run(args) -> int:
                 }
             )
         )
+    if result.plan_fixes:
+        con.print(f"[plan] {len(result.plan_fixes)} plan fix(es):")
+        for d in result.plan_fixes:
+            con.print(f"  - {d}")
     con.print(
         f"[done] {sum(r.ok for r in result.steps)}/{len(result.steps)} steps, "
         f"{result.rounds} plan round(s), "

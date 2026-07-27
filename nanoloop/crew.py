@@ -893,6 +893,88 @@ def verify_plan(workspace: Path | str, plan: Plan, goal: str = "") -> list[str]:
     return unmet
 
 
+def resolve_target(workspace: Path | str, path: str) -> tuple[str, str]:
+    """Map a planned `target_file` onto a path that can actually exist.
+
+    The planner emits broken paths CONSISTENTLY, not occasionally: for one goal
+    it produced `todo wrong/store.py` on 8 runs out of 8 — a directory that does
+    not exist, in a repo whose package is `todo`. Left alone, the step does not
+    edit `todo/store.py`; it CREATES a phantom file, the symbol lands nowhere the
+    acceptance criteria look, and the run burns a replan round rediscovering it.
+
+    Repair is deliberately narrow. Snapping to a same-named file is safe only
+    when exactly one candidate exists; anything ambiguous is left alone to fail
+    loudly, because a wrong snap edits the wrong file.
+
+    Returns (resolved_path, note). `note` is empty when nothing was changed.
+    """
+    workspace = Path(workspace)
+    target = workspace / path
+    if target.exists():
+        return path, ""
+    if target.parent.is_dir():
+        return path, ""  # legitimate new file in an existing directory
+
+    matches = [
+        p
+        for p in workspace.rglob(Path(path).name)
+        if p.is_file() and not any(x in {".git", ".venv", "venv", "__pycache__"} for x in p.parts)
+    ]
+    if len(matches) == 1:
+        fixed = str(matches[0].relative_to(workspace))
+        return fixed, f"{path!r} does not exist; using {fixed!r}"
+    return path, ""
+
+
+def normalize_plan(plan: Plan, workspace: Path | str | None = None) -> tuple[Plan, list[str]]:
+    """Repair target paths and drop redundant steps.
+
+    Returns the cleaned plan and a list of what changed.
+
+    The planner is unstable across runs — the same goal produced 1, 2, 4 and 5
+    steps, and one run emitted two identical "Add tests… tests/test_tags.py"
+    steps. A redundant step is not harmless: it spends model calls and gives the
+    loop another chance to fail.
+
+    Dedup is DELIBERATELY CONSERVATIVE, because a false merge silently drops
+    work. Two steps are the same only when:
+      - they declare the same `defines` in the same file — a strong signal, since
+        two steps cannot both create one symbol; or
+      - their titles are identical after normalisation.
+
+    Two steps on one file with no `defines` are NOT merged: "make add() accept
+    tags" and "make complete() case-insensitive" both target store.py and both
+    are real.
+    """
+    seen_defines: set[tuple[str, str]] = set()
+    seen_titles: set[str] = set()
+    kept: list[Step] = []
+    dropped: list[str] = []
+
+    for step in plan.steps:
+        if workspace is not None:
+            fixed, note = resolve_target(workspace, step.target_file)
+            if note:
+                dropped.append(note)
+                step = step.model_copy(update={"target_file": fixed})
+        title_key = " ".join(step.title.lower().split())
+        define_key = (step.target_file, step.defines.rpartition(".")[2].lower())
+
+        if step.defines and define_key in seen_defines:
+            dropped.append(f"{step.title!r} (already creates `{step.defines}`)")
+            continue
+        if title_key in seen_titles:
+            dropped.append(f"{step.title!r} (duplicate title)")
+            continue
+
+        if step.defines:
+            seen_defines.add(define_key)
+        seen_titles.add(title_key)
+        kept.append(step)
+
+    return Plan(steps=kept, acceptance=plan.acceptance), dropped
+
+
 def run_plan(
     plan: Plan,
     goal: str,
@@ -933,6 +1015,7 @@ class GoalResult:
     steps: list[StepResult] = field(default_factory=list)
     unmet: list[str] = field(default_factory=list)
     rounds: int = 0
+    plan_fixes: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -972,6 +1055,8 @@ def run_goal(
     for round_no in range(max_replans + 1):
         out.rounds = round_no + 1
         plan = plan_fn(goal, repomap.build(workspace), gaps or None)
+        plan, dropped = normalize_plan(plan, workspace)
+        out.plan_fixes.extend(dropped)
         out.plans.append(plan)
         if on_plan:
             on_plan(round_no, plan, gaps)

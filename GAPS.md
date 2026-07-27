@@ -119,7 +119,7 @@ propiedad de la que depende todo lo demás.
 
 ---
 
-## G3. El planner es inestable entre corridas — 🟠 serio
+## ~~G3~~. El planner es inestable entre corridas — ✅ CERRADO (y la premisa era falsa)
 
 Mismo objetivo, mismo modelo, cuatro corridas: **1, 2, 4 y 5 pasos**. Y en una de
 ellas emitió dos pasos idénticos ("Add tests… tests/test_tags.py" duplicado).
@@ -128,9 +128,41 @@ El replan compensa el caso "faltó algo", pero no el caso "el plan estaba mal
 descompuesto". Un plan de 5 pasos donde 2 son redundantes gasta llamadas y
 multiplica las ocasiones de fallar.
 
-**Qué haría:** deduplicar pasos por `(target_file, defines)` antes de ejecutar —
-determinista y barato. Y medir la varianza: 10 corridas del mismo objetivo,
-reportar la distribución de nº de pasos. Ahora mismo no está en el eval.
+**MEDIDO, y me equivocaba.** `eval/run_variance.py`, 8 corridas del mismo
+objetivo:
+
+```
+steps (raw)      median 3.0   range 3-3   sd 0.00   {3: 8}
+criterios con check                       16/16 (100%)
+VERDICT: stable
+```
+
+El planner es **determinista** a temperatura 0. Lo que yo tomé por varianza eran
+entradas distintas: objetivos ligeramente diferentes y repos en estados
+distintos. La lección: sin medir, "es inestable" era una historia que me conté.
+
+**Pero la medición destapó un bug real y consistente**, que es lo que de verdad
+causaba los replans:
+
+```
+paso 3  target_file='todo wrong/store.py'    <- 8 de 8 corridas
+```
+
+Un directorio que no existe. El paso no editaba `todo/store.py`: **creaba un
+fichero fantasma**, el símbolo caía donde ningún criterio miraba, y se gastaba
+una ronda de replan redescubriéndolo.
+
+`resolve_target()` lo repara de forma determinista: si la ruta no existe y hay
+**exactamente un** fichero con ese nombre, se ajusta a él; si hay ambigüedad se
+deja fallar, porque un ajuste equivocado edita el fichero equivocado.
+
+Efecto medido en vivo, mismo objetivo: **2 rondas de plan → 1**, 3/3 pasos, 3
+llamadas.
+
+También añadido `normalize_plan()`, que descarta pasos redundantes de forma
+conservadora — solo con `defines` repetido o título idéntico. Dos pasos sobre el
+mismo fichero sin `defines` NO se fusionan: un falso merge pierde trabajo en
+silencio.
 
 ---
 
