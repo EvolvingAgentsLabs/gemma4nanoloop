@@ -73,6 +73,10 @@ python -m nanoloop.main plan "add a remove() method" --workspace eval/fixture-re
 python -m nanoloop.main run "add a remove() method and a test" \
     --workspace eval/fixture-repo --interactive
 
+# Read work off the repo itself — no goal, no criteria, no human
+python -m nanoloop.main harvest --workspace <repo>          # list what it found
+python -m nanoloop.main harvest --workspace <repo> --run    # and work through it
+
 # With acceptance criteria you wrote (recommended for anything real)
 python -m nanoloop.main run "add a by_tag(tag) method to Store" \
     --workspace eval/fixture-repo --accept criteria.json
@@ -119,6 +123,7 @@ nanoloop/
   snapshot.py       clean tree per candidate (D8)
   recall.py         EmbeddingGemma semantic recall over ./Memory
   repomap.py        file tree + docstring + defined symbols per file
+  harvest.py        tasks read off failing pytest/mypy/ruff, oracle attached
   session.py memory.py skills.py frontmatter.py tools.py    (from nanoLoop)
 Skills/             scaffold-fastapi, add-endpoint, setup-pytest
 eval/               fixtures, measurement harnesses, fixture-repo
@@ -138,6 +143,7 @@ below was measured against a live model, not reasoned about.
 | scaffold a FastAPI service from nothing | 3/3 steps, **0 model calls** (all skills) |
 | edit a 22 KB file (symbol past the old window) | 1 step, 1 call, 0 repairs |
 | replan after an unmet criterion | 2 rounds, criterion satisfied |
+| **harvest: fix a failing test unsupervised** | **1/1 solved, 1 model call** — no goal or criteria written by hand |
 | semantic recall@1 vs keyword | **0.850 vs 0.000** (recall@5 saturates 1.0/1.0) |
 | latency per call | ~30 s local (12B) / ~4 s cloud (26B) |
 | reasoning tokens per call | **0** — see below |

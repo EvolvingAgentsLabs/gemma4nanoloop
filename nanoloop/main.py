@@ -137,7 +137,9 @@ def cmd_run(args) -> int:
     catalog = skills.catalog_text()
     approved = {"ok": True}
 
-    user_criteria = _load_criteria(args.accept) if args.accept else []
+    user_criteria = getattr(args, "_criteria", None) or (
+        _load_criteria(args.accept) if args.accept else []
+    )
     if user_criteria:
         con.print(
             f"[acceptance] {len(user_criteria)} criterion(s) supplied by you "
@@ -235,6 +237,58 @@ def cmd_run(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_harvest(args) -> int:
+    """Read work off the repo's own failing signals."""
+    from . import harvest as hv
+
+    con = _console()
+    tasks = hv.harvest(args.workspace, args.sources.split(",") if args.sources else None)
+
+    if not tasks:
+        con.print("[harvest] nothing to do — the repo's signals are all green")
+        return 0
+
+    con.print(f"[harvest] {len(tasks)} task(s) from the repo:")
+    for i, t in enumerate(tasks, 1):
+        con.print(f"\n  {i}. [{t.source}] {t.goal.splitlines()[0][:88]}")
+        con.print(f"     fix in:   {t.target_file}")
+        con.print(f"     evidence: {t.evidence.splitlines()[0][:88]}")
+        con.print(f"     oracle:   {len(t.acceptance)} executable criterion(s)")
+
+    if args.json:
+        Path(args.json).write_text(hv.dump(tasks), encoding="utf-8")
+        con.print(f"\n[harvest] written to {args.json}")
+
+    if not args.run:
+        con.print("\n[harvest] pass --run to work through them")
+        return 0
+
+    # Preflight is skipped on purpose: the repo IS red, and that red is the
+    # work. Refusing to start here would make harvest useless by construction.
+    done = 0
+    for i, t in enumerate(tasks[: args.limit or len(tasks)], 1):
+        con.print(f"\n=== task {i}: [{t.source}] {t.target_file} ===")
+        rc = cmd_run(
+            argparse.Namespace(
+                goal=t.goal,
+                workspace=args.workspace,
+                interactive=False,
+                no_gates=True,  # the repo is red; its own criterion is the gate
+                snapshot=args.snapshot,
+                n_candidates=args.n_candidates,
+                max_replans=args.max_replans,
+                accept="",
+                skip_preflight=True,
+                _criteria=t.acceptance,
+            )
+        )
+        done += rc == 0
+        con.print(f"=== task {i}: {'SOLVED' if rc == 0 else 'not solved'} ===")
+
+    con.print(f"\n[harvest] {done}/{min(len(tasks), args.limit or len(tasks))} solved")
+    return 0 if done else 1
+
+
 def cli(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="gemma4nanoloop")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -285,6 +339,19 @@ def cli(argv: list[str] | None = None) -> int:
         help="extra planning rounds when acceptance criteria are unmet",
     )
     sr.set_defaults(fn=cmd_run)
+
+    sh = sub.add_parser("harvest", help="read work off the repo's failing signals")
+    sh.add_argument("--workspace", default="./workspace")
+    sh.add_argument("--sources", default="", help="comma-separated: pytest,mypy,ruff")
+    sh.add_argument("--json", default="", metavar="FILE", help="write the tasks as JSON")
+    sh.add_argument("--run", action="store_true", help="work through the tasks")
+    sh.add_argument("--limit", type=int, default=0, help="stop after N tasks")
+    sh.add_argument("--snapshot", default="copy", choices=["copy", "git"])
+    sh.add_argument(
+        "--n-candidates", type=int, default=crew.DEFAULT_N_CANDIDATES, dest="n_candidates"
+    )
+    sh.add_argument("--max-replans", type=int, default=crew.MAX_REPLANS, dest="max_replans")
+    sh.set_defaults(fn=cmd_harvest)
 
     args = p.parse_args(argv)
     return args.fn(args)

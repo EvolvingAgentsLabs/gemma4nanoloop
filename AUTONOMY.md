@@ -63,9 +63,32 @@ tests. Todas estas fuentes traen su propio oráculo:
 | hueco de cobertura | el test que escribes | invierte el problema: la tarea *es* escribir el test |
 | dependencia desactualizada | la suite entera | riesgo alto, señal clarísima |
 
-**Primer paso concreto:** `nanoloop harvest` — corre los gates, parsea los
-fallos, y emite tareas con criterio ya adjunto. El crew deja de esperar
-instrucciones y empieza a leer el estado del repo.
+**HECHO.** `nanoloop harvest` corre los gates, parsea los fallos y emite tareas
+con su criterio adjunto. `--run` las trabaja una a una.
+
+Probado de punta a punta: repo con un `summarize()` que devolvía `"TODO"` y un
+test que lo especificaba. Sin objetivo ni criterio escritos a mano:
+
+```
+[harvest] 1 task(s) from the repo
+  1. [pytest] Make the failing test ...::test_summarize_counts pass
+     fix in:   todo/store.py          <- el CÓDIGO, no el test
+     oracle:   1 executable criterion
+=== task 1: SOLVED ===   1/1 steps, 1 model call
+```
+
+Dos detalles que decidían si esto servía o no:
+
+- **La tarea apunta al código bajo prueba, no al fichero de test.** Se infiere de
+  los imports del test. Apuntar al test invita a editarlo hasta que pase, que es
+  el único resultado que dejaría todo el ejercicio sin valor. El objetivo además
+  lo dice explícito: *"Fix the code under test, not the test itself."* Verificado:
+  el test quedó intacto byte a byte.
+- **El preflight se salta a propósito** en `--run`. El repo ESTÁ rojo, y ese rojo
+  es el trabajo; negarse a arrancar haría harvest inútil por construcción.
+
+No se cosechan `TODO`/`FIXME`: no traen oráculo, así que el "hecho" sería opinión
+del modelo — justo lo que este módulo existe para evitar.
 
 ---
 
@@ -121,7 +144,7 @@ Anti-patrones que suenan a autonomía y son retrocesos:
 
 | # | Qué | Por qué |
 |---|---|---|
-| 1 | `harvest`: tareas desde tests/mypy que fallan | elimina los dos eslabones débiles a la vez |
+| ~~1~~ | ~~`harvest`~~ ✅ **hecho** — tareas desde pytest/mypy/ruff | elimina los dos eslabones débiles a la vez |
 | 2 | entregable = rama + PR con reporte generado del log | hace la supervisión asíncrona |
 | 3 | presupuesto por tarea + rendirse como resultado | sin esto, autónomo = descontrolado |
 | 4 | memoria de fallos alimentando el planner | deja de repetir el mismo error |
