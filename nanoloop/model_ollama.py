@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -74,6 +75,11 @@ BACKEND = os.environ.get("NANOLOOP_BACKEND", "ollama")
 
 # Reasoning off by default. See the 8x measurement above.
 THINK = os.environ.get("NANOLOOP_THINK", "0").lower() in ("1", "true", "yes")
+
+# Hosted backends only, and empty by default: gemma-4-26b-a4b-it returns HTTP 400
+# ("Thinking budget is not supported for this model") if reasoning_effort is sent
+# at all. Set to none|low|medium|high for a model that does accept it.
+REASONING_EFFORT = os.environ.get("NANOLOOP_REASONING_EFFORT", "")
 
 # On /v1 only: `native` is silently ignored there, so the default is `openai`.
 STRUCTURED_MODE = os.environ.get("NANOLOOP_STRUCTURED_MODE", "openai")
@@ -158,6 +164,35 @@ def _call_native(
     return msg.get("content") or "", usage, msg.get("thinking") or ""
 
 
+THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL)
+
+
+def split_thought(text: str) -> tuple[str, str]:
+    """Separate inline <thought> blocks from the real answer.
+
+    A THIRD shape for the same problem, and the nastiest of the three:
+
+        ollama /api/chat   separate `thinking` field   controllable via think:false
+        ollama /v1         separate `reasoning` field  NOT controllable
+        aistudio           INLINE <thought>...</thought> IN THE CONTENT
+
+    gemma-4-26b-a4b-it rejects reasoning_effort outright, so the reasoning cannot
+    be turned off — it can only be stripped after the fact. Left in place every
+    structured-output parse fails, because the JSON does not start at character
+    zero. Observed: `<thought>...</thought>ok` for a prompt asking for one word.
+
+    Returns (answer, thought) so the thought length still reaches the call log
+    and stays comparable with the other two backends.
+    """
+    thoughts = THOUGHT_RE.findall(text)
+    answer = THOUGHT_RE.sub("", text).strip()
+    if not thoughts and "<thought>" in text:
+        # Truncated mid-thought: no closing tag, so nothing after it is usable.
+        head, _, tail = text.partition("<thought>")
+        return head.strip(), tail
+    return answer, "".join(thoughts)
+
+
 def build_messages(system: str, user: str) -> list[dict]:
     """Chat messages, folding the system turn where the backend rejects it."""
     if BACKEND in FOLD_SYSTEM:
@@ -176,10 +211,16 @@ def _call_openai(
         "temperature": temperature,
     }
     if remote:
-        # A hosted endpoint has no num_ctx knob — that is a local-runtime
-        # concept — but it DOES have a thinking budget, and AI Studio defaults
-        # it HIGH. Same 8x trap as Ollama's /v1, so it is set explicitly.
-        body["reasoning_effort"] = "high" if THINK else "none"
+        # A hosted endpoint has no num_ctx knob — that is a local-runtime concept.
+        #
+        # reasoning_effort is sent ONLY when explicitly requested. gemma-4-26b-a4b-it
+        # rejects it outright ("Thinking budget is not supported for this model",
+        # HTTP 400) even though the native SDK exposes thinking_level — the OpenAI
+        # shim does not map it for this model. Sending it unconditionally makes
+        # every call fail. Whether the model reasons anyway is measured, not
+        # assumed: `thinking_chars` in the call log is the check.
+        if REASONING_EFFORT:
+            body["reasoning_effort"] = REASONING_EFFORT
         if schema is not None:
             body["response_format"] = {
                 "type": "json_schema",
@@ -200,7 +241,12 @@ def _call_openai(
     msg = choice.get("message", {}) or {}
     u = data.get("usage", {}) or {}
     usage = {"input_tokens": u.get("prompt_tokens"), "output_tokens": u.get("completion_tokens")}
-    return msg.get("content") or "", usage, msg.get("reasoning") or ""
+    content = msg.get("content") or ""
+    reasoning = msg.get("reasoning") or ""
+    if "<thought>" in content:  # aistudio inlines it; see split_thought()
+        content, inline = split_thought(content)
+        reasoning = reasoning + inline
+    return content, usage, reasoning
 
 
 def chat(

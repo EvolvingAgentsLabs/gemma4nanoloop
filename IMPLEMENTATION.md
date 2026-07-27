@@ -196,6 +196,54 @@ on the retry with no human involvement. Output verified by executing it —
 `done()` filters correctly, `priority` defaults to 0, `render_summary` returns
 "1 done / 2 total" — and all three gates pass independently.
 
+### F8. Oracle A/B — el 12B **no** es el cuello de botella (pero el cloud es 9x más rápido)
+
+`gemma-4-26b-a4b-it` vía AI Studio, mismos 12 fixtures, mismo prompt:
+
+```
+              anchor-hit   p50/llamada   total
+12B local        100.0%        29.8 s    366 s
+26B cloud        100.0%         3.4 s     41 s
+DIAGNOSIS: local already clears the bar; the oracle adds nothing here.
+```
+
+**En calidad no hay techo que romper**: ambos aciertan los 12 anclajes. Cambiar a
+un modelo mayor no compraría precisión en esta métrica. Lo que sí compra es
+**9x de wall clock** — y eso no es despreciable para iterar.
+
+Tres detalles que la integración necesitó, cada uno un fallo silencioso distinto:
+
+1. **`reasoning_effort` da HTTP 400** — *"Thinking budget is not supported for
+   this model"*. El SDK nativo expone `thinking_level` (como en el snippet del
+   usuario) pero el shim OpenAI no lo mapea para este modelo. Enviarlo siempre
+   rompe **todas** las llamadas.
+2. **El razonamiento va INLINE como `<thought>…</thought>` dentro del content** —
+   tercera forma del mismo problema, y la peor:
+
+   ```
+   ollama /api/chat   campo `thinking` aparte     controlable con think:false
+   ollama /v1         campo `reasoning` aparte    NO controlable
+   aistudio           <thought>…</thought> INLINE  no desactivable, solo se limpia
+   ```
+
+   Sin limpiarlo, todo parseo de salida estructurada falla porque el JSON no
+   empieza en el carácter 0. Con `response_format` el 26B no emitió ningún
+   `<thought>` (0 chars en las 12 llamadas); solo aparece en texto libre.
+3. **Gemma vía Gemini API rechaza el rol `system`** — se pliega en el turno de
+   usuario para mantener UNA sola definición de prompt entre backends.
+
+**Señal blanda de throttling.** Los mismos 12 fixtures en local dieron p50 17.5 s
+en la primera medición (F4) y 29.8 s ahora — **1.7x más lento** tras un día de
+carga sostenida. Son corridas distintas y no es prueba, pero es exactamente la
+forma que tendría la degradación térmica de PLAN.md §4 Phase 4, y refuerza que
+ese soak hay que correrlo en frío y medido.
+
+**Recomendación revisada.** El A/B mata el argumento de calidad pero no el de
+velocidad. Híbrido defendible: iterar sobre el *harness* contra el 26B (9x más
+rápido), y **cerrar toda medición de aceptación contra el 12B local**. Los
+números de PLAN.md son números de 12B; desarrollar contra el 26B habría tapado
+el bug del repo map (F7), que solo apareció porque un 12B no puede adivinar.
+
 ---
 
 ## 0. Delta between PLAN.md and reality

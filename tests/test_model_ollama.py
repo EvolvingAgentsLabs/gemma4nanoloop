@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import json
+
 from nanoloop import model_ollama
 
 # --- reasoning: the 8x finding ----------------------------------------------
@@ -160,3 +162,43 @@ def test_probe_reports_a_missing_key_rather_than_failing_obscurely(monkeypatch):
         monkeypatch.delenv(v, raising=False)
     out = model_ollama.probe()
     assert out["ok"] is False and "no API key" in out["error"]
+
+
+# --- inline <thought>: the third shape of the reasoning problem --------------
+
+
+def test_inline_thought_is_stripped_from_the_answer():
+    """aistudio returns `<thought>...</thought>ok`. Left in place, every
+    structured-output parse fails because the JSON does not start at char 0."""
+    answer, thought = model_ollama.split_thought("<thought>reasoning here</thought>ok")
+    assert answer == "ok"
+    assert "reasoning here" in thought
+
+
+def test_inline_thought_before_json():
+    raw = '<thought>I should return JSON</thought>{"path": "a.py"}'
+    answer, _ = model_ollama.split_thought(raw)
+    assert answer.startswith("{") and json.loads(answer)["path"] == "a.py"
+
+
+def test_multiple_thought_blocks_all_removed():
+    answer, thought = model_ollama.split_thought("<thought>a</thought>X<thought>b</thought>Y")
+    assert answer == "XY"
+    assert "a" in thought and "b" in thought
+
+
+def test_text_without_thought_is_untouched():
+    assert model_ollama.split_thought('{"ok": 1}') == ('{"ok": 1}', "")
+
+
+def test_unclosed_thought_yields_no_false_answer():
+    """Truncated mid-thought: nothing after the open tag is usable, so the
+    answer must come back empty rather than as garbage reasoning text."""
+    answer, thought = model_ollama.split_thought("<thought>cut off here")
+    assert answer == ""
+    assert "cut off" in thought
+
+
+def test_reasoning_effort_omitted_by_default():
+    """gemma-4-26b-a4b-it returns HTTP 400 if reasoning_effort is sent at all."""
+    assert model_ollama.REASONING_EFFORT == ""
