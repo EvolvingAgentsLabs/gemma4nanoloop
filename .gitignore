@@ -13,3 +13,4 @@ workspace/
 *.egg-info/
 .env
 .env.*
+linkedin-article-*.md
