@@ -222,6 +222,30 @@ def from_ruff(workspace: Path) -> list[Task]:
     ]
 
 
+def failing_tests(workspace: Path | str) -> set[str]:
+    """The set of test node IDs failing right now.
+
+    Harvest works on repos that are ALREADY red, so "all gates green" cannot be
+    the bar for a task — nothing would ever pass. But dropping the gates
+    entirely, which is what the first version did, removes the only check that
+    sees the whole suite: task 2 silently broke what task 1 had just fixed and
+    the run still reported 2/2 solved, because each task only ever ran its own
+    test.
+
+    The right bar for a red repo is a BASELINE: you may leave existing failures
+    alone, you may not create new ones.
+    """
+    code, out = _run(Path(workspace), [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf"])
+    if code == 0:
+        return set()
+    return {node for node, _ in PYTEST_FAILED.findall(out)}
+
+
+def regressions(workspace: Path | str, baseline: set[str]) -> set[str]:
+    """Tests failing now that were not failing before."""
+    return failing_tests(workspace) - baseline
+
+
 SOURCES = {"pytest": from_pytest, "mypy": from_mypy, "ruff": from_ruff}
 
 

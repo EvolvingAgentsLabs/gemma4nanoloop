@@ -234,6 +234,8 @@ def cmd_run(args) -> int:
         f"{result.rounds} plan round(s), "
         f"{sum(r.model_calls for r in result.steps)} model calls"
     )
+    if getattr(args, "_collect", None) is not None:
+        args._collect.append(result)
     return 0 if ok else 1
 
 
@@ -265,11 +267,31 @@ def cmd_harvest(args) -> int:
 
     # Preflight is skipped on purpose: the repo IS red, and that red is the
     # work. Refusing to start here would make harvest useless by construction.
+    delivery = None
+    if args.deliver or args.pr:
+        from . import deliver as dl
+
+        delivery = dl.Delivery(args.workspace, f"harvest-{tasks[0].source}")
+        ok, msg = delivery.start()
+        if not ok:
+            con.print(f"[deliver] cannot start: {msg}")
+            return 4
+        con.print(f"[deliver] working on branch {msg}")
+
+    # Everything failing right now. A task may leave these alone; it may not
+    # add to them. Without this, task 2 can undo task 1 and both report success.
+    baseline = hv.failing_tests(args.workspace)
+    if baseline:
+        con.print(f"[harvest] baseline: {len(baseline)} test(s) already failing")
+
+    sections: list[dict] = []
     done = 0
     for i, t in enumerate(tasks[: args.limit or len(tasks)], 1):
         con.print(f"\n=== task {i}: [{t.source}] {t.target_file} ===")
+        collected: list = []
         rc = cmd_run(
             argparse.Namespace(
+                _collect=collected,
                 goal=t.goal,
                 workspace=args.workspace,
                 interactive=False,
@@ -282,10 +304,60 @@ def cmd_harvest(args) -> int:
                 _criteria=t.acceptance,
             )
         )
+        regressed = hv.regressions(args.workspace, baseline) if rc == 0 else set()
+        if regressed:
+            con.print(f"  REGRESSION: {len(regressed)} test(s) newly broken by this task:")
+            for r in sorted(regressed)[:5]:
+                con.print(f"    - {r}")
+            con.print("  reverting this task")
+            if delivery:
+                delivery.discard_uncommitted()
+            rc = 1
+
         done += rc == 0
         con.print(f"=== task {i}: {'SOLVED' if rc == 0 else 'not solved'} ===")
 
-    con.print(f"\n[harvest] {done}/{min(len(tasks), args.limit or len(tasks))} solved")
+        res = collected[0] if collected else None
+        sections.append(
+            {
+                "solved": rc == 0,
+                "goal_line": t.goal.splitlines()[0],
+                "source": t.source,
+                "target_file": t.target_file,
+                "evidence": t.evidence,
+                "unmet": (list(res.unmet) if res else [])
+                + [f"regressed {r}" for r in sorted(regressed)],
+                "steps": len(res.steps) if res else 0,
+                "model_calls": sum(r.model_calls for r in res.steps) if res else 0,
+                "repairs": sum(r.repair_attempts for r in res.steps) if res else 0,
+                "rounds": res.rounds if res else 0,
+                "anchors": [k for r in (res.steps if res else []) for k in r.anchor_kinds],
+                "plan_fixes": list(res.plan_fixes) if res else [],
+            }
+        )
+        if delivery:
+            if rc == 0:
+                delivery.commit(
+                    f"{t.goal.splitlines()[0][:68]}",
+                    f"Source: {t.source}\nEvidence: {t.evidence.splitlines()[0][:200]}\n\n"
+                    f"Verified by an executable criterion, not by assertion.",
+                )
+            else:
+                # Failed work is reported, never committed.
+                delivery.discard_uncommitted()
+
+    total = min(len(tasks), args.limit or len(tasks))
+    con.print(f"\n[harvest] {done}/{total} solved")
+
+    if delivery:
+        title = f"nanoloop: {done}/{total} harvested task(s)"
+        report = delivery.write_report(title, sections)
+        delivery.commit("Add nanoloop run report")
+        con.print(f"[deliver] {len(delivery.result.commits)} commit(s) on {delivery.branch}")
+        con.print(f"[deliver] report at {delivery.result.report_path}")
+        if args.pr:
+            ok, msg = delivery.open_pr(title, report)
+            con.print(f"[deliver] {'PR: ' + msg if ok else 'PR failed: ' + msg}")
     return 0 if done else 1
 
 
@@ -351,6 +423,16 @@ def cli(argv: list[str] | None = None) -> int:
         "--n-candidates", type=int, default=crew.DEFAULT_N_CANDIDATES, dest="n_candidates"
     )
     sh.add_argument("--max-replans", type=int, default=crew.MAX_REPLANS, dest="max_replans")
+    sh.add_argument(
+        "--deliver",
+        action="store_true",
+        help="work on a branch, one commit per solved task, plus a report",
+    )
+    sh.add_argument(
+        "--pr",
+        action="store_true",
+        help="push the branch and open a pull request (implies --deliver)",
+    )
     sh.set_defaults(fn=cmd_harvest)
 
     args = p.parse_args(argv)

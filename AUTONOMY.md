@@ -105,6 +105,36 @@ Además fuerza algo sano: el crew tiene que **explicar su trabajo**, y ya tiene
 todo el material (`calls.jsonl`, criterios cumplidos/incumplidos, pasos, fixes
 del plan). No hay que pedirle al modelo que lo redacte — se genera del log.
 
+**HECHO.** `--deliver` crea una rama, un commit por tarea resuelta, y
+`NANOLOOP-REPORT.md` generado de los datos. `--pr` empuja y abre el PR (opt-in:
+publicar es hacia fuera, no algo que hacer por defecto). Lo no resuelto va
+**primero** en el reporte y **nunca se commitea**.
+
+Probado: repo git con dos specs sin implementar, sin objetivo ni criterios
+escritos a mano → **2/2 resueltas, 4 tests en verde, diff de 1 fichero**, dos
+commits en `nanoloop/harvest-pytest`, `main` intacto.
+
+Tres bugs que solo aparecieron al hacerlo de verdad:
+
+1. **`git add -A` metía `__pycache__`** en los commits; el diff a revisar era
+   mayormente bytecode.
+2. **Sin gates no hay red entre tareas.** Puse `no_gates=True` porque el repo
+   está rojo — y la tarea 2 deshizo la 1 reportando ambas como resueltas. La
+   semántica correcta para un repo rojo no es "sin gates" sino **baseline**:
+   puedes dejar los fallos que ya había, no puedes añadir nuevos.
+   `harvest.regressions()` lo comprueba y revierte la tarea que regresa.
+3. **La fusión de criterios entre rondas descartaba el `check`.** Reconstruía
+   `Acceptance(symbol, file)` perdiendo el ejecutable, así que la verificación
+   caía a "¿existe el nombre?" — y una tarea que commiteó un `summarize()` que
+   devolvía un dict se reportó resuelta porque la función de test seguía
+   existiendo. **La misma forma que el bug del schema: una comprobación que
+   aparenta correr y no puede fallar.** Es el error que más veces ha aparecido
+   en este proyecto.
+
+Y la cascada funciona: arreglados los tests, harvest encontró acto seguido un
+error de **mypy** en el código recién escrito (`list[str]` donde iba `list[Item]`)
+que los tests no cazan porque en runtime da igual.
+
 ---
 
 ## La tercera: saber cuándo parar y cuándo rendirse
@@ -145,7 +175,7 @@ Anti-patrones que suenan a autonomía y son retrocesos:
 | # | Qué | Por qué |
 |---|---|---|
 | ~~1~~ | ~~`harvest`~~ ✅ **hecho** — tareas desde pytest/mypy/ruff | elimina los dos eslabones débiles a la vez |
-| 2 | entregable = rama + PR con reporte generado del log | hace la supervisión asíncrona |
+| ~~2~~ | ~~entregable = rama + PR~~ ✅ **hecho** | hace la supervisión asíncrona |
 | 3 | presupuesto por tarea + rendirse como resultado | sin esto, autónomo = descontrolado |
 | 4 | memoria de fallos alimentando el planner | deja de repetir el mismo error |
 | 5 | G4: medir de verdad la creación de ficheros | es el único límite real *del modelo* |

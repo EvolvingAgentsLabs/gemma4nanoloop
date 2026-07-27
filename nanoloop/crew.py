@@ -1066,8 +1066,21 @@ def run_goal(
 
         # Criteria carry over: a second plan may drop or reword them, and the
         # goal's requirements do not change just because the planner forgot one.
-        seen = {(a.symbol, a.file) for p in out.plans for a in p.acceptance}
-        merged = Plan(steps=[], acceptance=[Acceptance(symbol=s, file=f) for s, f in sorted(seen)])
+        # Keep the WHOLE criterion, not just its identity. Rebuilding it from
+        # (symbol, file) silently dropped `check`, so verification fell back to
+        # "does this name exist" — and a task that committed a summarize()
+        # returning the wrong type was reported solved because the test function
+        # it was supposed to satisfy still existed. Same failure shape as the
+        # schema bug: a check that appears to run and cannot fail.
+        merged_acc: dict[tuple[str, str], Acceptance] = {}
+        for plan_ in out.plans:
+            for a in plan_.acceptance:
+                key = (a.symbol, a.file)
+                # A later round may restate a criterion without its check; never
+                # let that weaken one we already had.
+                if key not in merged_acc or (a.check and not merged_acc[key].check):
+                    merged_acc[key] = a
+        merged = Plan(steps=[], acceptance=[merged_acc[k] for k in sorted(merged_acc)])
         out.unmet = verify_plan(workspace, merged, goal)
         if not out.unmet:
             return out

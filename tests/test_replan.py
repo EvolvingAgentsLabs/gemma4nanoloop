@@ -114,3 +114,38 @@ def test_repo_map_is_rebuilt_each_round(tmp_path):
     crew.run_goal("g", tmp_path, plan_fn, propose, gates=["true"])
     assert "by_tag" not in maps[0]
     assert len(maps) == 1 or "by_tag" in maps[1]
+
+
+def test_merged_criteria_keep_their_executable_check(tmp_path):
+    """Rebuilding criteria from (symbol, file) dropped `check`, so verification
+    silently fell back to "does this name exist". A task that committed a
+    summarize() returning the wrong type was reported SOLVED because the test
+    function it was meant to satisfy still existed."""
+    (tmp_path / "s.py").write_text("def wrong():\n    return 'nope'\n")
+    check = "from s import wrong\nassert wrong() == 'right'\n"
+
+    def plan_fn(goal, repo_map, gaps):
+        return _plan([], [Acceptance(symbol="wrong", file="s.py", check=check)])
+
+    res = crew.run_goal(
+        "fix wrong", tmp_path, plan_fn, lambda *a: None, gates=["true"], max_replans=0
+    )
+    assert not res.ok
+    assert "check failed" in res.unmet[0]
+
+
+def test_a_later_round_cannot_weaken_an_earlier_criterion(tmp_path):
+    (tmp_path / "s.py").write_text("def wrong():\n    return 'nope'\n")
+    check = "from s import wrong\nassert wrong() == 'right'\n"
+    rounds = {"n": 0}
+
+    def plan_fn(goal, repo_map, gaps):
+        rounds["n"] += 1
+        if rounds["n"] == 1:
+            return _plan([], [Acceptance(symbol="wrong", file="s.py", check=check)])
+        return _plan([], [Acceptance(symbol="wrong", file="s.py")])  # no check
+
+    res = crew.run_goal(
+        "fix wrong", tmp_path, plan_fn, lambda *a: None, gates=["true"], max_replans=1
+    )
+    assert not res.ok and "check failed" in res.unmet[0]
