@@ -211,7 +211,7 @@ Anti-patrones que suenan a autonomía y son retrocesos:
 | ~~2~~ | ~~entregable = rama + PR~~ ✅ **hecho** | hace la supervisión asíncrona |
 | ~~3~~ | ~~presupuesto por tarea + rendirse~~ ✅ **hecho** | sin esto, autónomo = descontrolado |
 | ~~4~~ | ~~memoria de fallos~~ ✅ **hecho** | deja de repetir el mismo error |
-| 5 | G4: medir de verdad la creación de ficheros | es el único límite real *del modelo* |
+| ~~5~~ | ~~G4: medir la creación de ficheros~~ ✅ **93,8%** | resultó ser mucho menos límite del que parecía |
 
 Con 1+2+3 esto pasa de "ejecutor supervisado" a algo que se le puede soltar en un
 repo con tests y volver a mirarlo al rato. **No porque el modelo sea más listo,

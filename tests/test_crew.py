@@ -754,3 +754,33 @@ def test_normalize_plan_repairs_paths_when_given_a_workspace(tmp_path):
 def test_normalize_plan_without_a_workspace_leaves_paths_alone():
     plan = Plan(steps=[Step(title="t", target_file="weird/x.py", intent="i")])
     assert crew.normalize_plan(plan)[0].steps[0].target_file == "weird/x.py"
+
+
+# --- test modules: the name is not the requirement ---------------------------
+
+
+def test_any_test_function_satisfies_a_test_module_requirement(tmp_path):
+    """Measured: asked for `test_pending_empty`, the model wrote
+    `test_store_pending_is_empty_on_new_store` — valid, importable, better
+    named. An exact-name check rejected it and made whole-file generation look
+    like 68.8% when the code was fine 93.8% of the time."""
+    f = tmp_path / "test_x.py"
+    f.write_text("def test_store_pending_is_empty_on_new_store():\n    assert True\n")
+    assert crew.defines_symbol(tmp_path, "test_x.py", "test_pending_empty")
+
+
+def test_a_test_module_with_no_tests_still_fails(tmp_path):
+    (tmp_path / "test_x.py").write_text("def helper():\n    pass\n")
+    assert not crew.defines_symbol(tmp_path, "test_x.py", "test_anything")
+
+
+def test_non_test_modules_still_need_the_exact_name(tmp_path):
+    """The relaxation is for test modules only: elsewhere the name IS the
+    contract, and by_tag vs by_label is a real difference."""
+    (tmp_path / "m.py").write_text("def by_label():\n    pass\n")
+    assert not crew.defines_symbol(tmp_path, "m.py", "by_tag")
+
+
+def test_a_non_test_symbol_in_a_test_module_needs_its_exact_name(tmp_path):
+    (tmp_path / "test_x.py").write_text("def test_a():\n    pass\n")
+    assert not crew.defines_symbol(tmp_path, "test_x.py", "make_fixture")

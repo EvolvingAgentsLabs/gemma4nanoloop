@@ -166,17 +166,52 @@ silencio.
 
 ---
 
-## G4. Crear ficheros nuevos sigue siendo el punto débil — 🟠 serio
+## ~~G4~~. Crear ficheros nuevos — ✅ MEDIDO (y era mucho menos grave)
 
 Editar con anclajes: ~100%. Escribir un fichero entero: falla repetidamente,
 incluso con el 26B. Ya mejoró mucho (prompt y esquema propios, `ast.parse` antes
 de escribir, `autofix`), pero es donde se concentran las reparaciones.
 
-Es exactamente lo que D4 predice, y la razón de que los anclajes existan. La
-implicación práctica: **las tareas que requieren módulos nuevos son más frágiles
-que las que extienden código existente**. Las skills lo esquivan cuando aplican
-(el FastAPI salió en 3/3 con 0 llamadas) — por eso conviene cubrir con skills
-todo lo que sea plantilla.
+**MEDIDO.** `eval/run_newfiles.py`, 16 fixtures, embudo en vez de tasa:
+
+```
+             cruda    pipeline real
+parsed      100.0%       100.0%
+syntax       93.8%        93.8%
+lint         41.7%        93.8%   <- autofix
+imports      41.7%        93.8%
+defines      41.7%        93.8%
+FULLY VALID  41.7%        93.8%
+```
+
+**Dos veces me equivoqué al medir, y las dos veces a la baja.**
+
+1. La primera medición dio **41,7%** — pero medía la salida *cruda*, sin el
+   `crew.autofix` que el pipeline aplica tras cada edit. Los fallos dominantes
+   eran `F401 unused import` e `I001 imports sin ordenar`: **auto-corregibles**.
+   Estaba culpando al modelo de algo que una herramienta arregla siempre.
+2. La segunda dio **68,8%**, y todos los fallos restantes eran ficheros de test
+   con el diagnóstico *"does not define test_X"*. Mirando lo que escribió:
+
+   | pedido | escribió |
+   |---|---|
+   | `test_pending_empty` | `test_store_pending_is_empty_on_new_store` |
+   | `test_all_returns_both` | `test_all_returns_two_items_after_adding_two` |
+
+   Tests **válidos, importables y mejor nombrados que los que pedí**. El que
+   fallaba era mi verificador: en un módulo de test el nombre exacto no es el
+   requisito, que exista un test lo es. `defines_symbol` ahora acepta cualquier
+   `test_*` en un módulo de test — y solo ahí; fuera, el nombre sigue siendo el
+   contrato (`by_tag` ≠ `by_label`).
+
+**Resultado real: 15/16 = 93,8%.** Un único fallo genuino en 16 (un error de
+indentación). Frente al ~100% de los edits con anclaje, la brecha existe pero es
+mucho menor de lo que aparentaba — y el `--raw` del harness deja ver cuánto de
+eso lo aporta la herramienta y no el modelo.
+
+Sigue valiendo: cubrir con **skills** todo lo que sea plantilla (el FastAPI salió
+3/3 con 0 llamadas). Pero "crear ficheros nuevos es el punto débil" era, en
+buena medida, un artefacto de cómo lo estaba midiendo.
 
 ---
 

@@ -1,0 +1,8 @@
+[
+  {
+    "i": 8,
+    "file": "tests/test_add.py",
+    "stage": "parsed",
+    "why": "line 10: unindent does not match any outer indentation level"
+  }
+]

@@ -1,0 +1,20 @@
+# G4 fixtures: every one requires writing a file that does not exist.
+# Deliberately varied along the axes that plausibly matter — does it need to
+# import from the repo, does it define a class or a function, is it a test or a
+# module — so the funnel can show WHICH kind fails, not just how often.
+{"title": "Add a priority helper module", "target_file": "todo/priority.py", "intent": "A module defining rank(item) that returns 0 for done items and 1 otherwise. Import Item from todo.store.", "defines": "rank"}
+{"title": "Add a tag index module", "target_file": "todo/tagindex.py", "intent": "A module defining build_index(items) returning a dict mapping each tag to a list of item titles. Import Item from todo.store.", "defines": "build_index"}
+{"title": "Add a plain text exporter", "target_file": "todo/export.py", "intent": "A module defining to_lines(items) returning a list of strings, one per item, each just the title. Import Item from todo.store.", "defines": "to_lines"}
+{"title": "Add a counters dataclass", "target_file": "todo/counters.py", "intent": "A module defining a dataclass Counters with integer fields done and pending, both defaulting to 0.", "defines": "Counters"}
+{"title": "Add a validation helper", "target_file": "todo/validate.py", "intent": "A module defining is_valid_title(title) that returns True when the title is a non-empty string of at most 80 characters.", "defines": "is_valid_title"}
+{"title": "Add a sorting helper", "target_file": "todo/sorting.py", "intent": "A module defining by_title(items) that returns the items sorted alphabetically by title. Import Item from todo.store.", "defines": "by_title"}
+{"title": "Add a stats module", "target_file": "todo/stats.py", "intent": "A module defining completion_ratio(items) returning done count divided by total, or 0.0 when there are no items. Import Item from todo.store.", "defines": "completion_ratio"}
+{"title": "Add a filters module", "target_file": "todo/filters.py", "intent": "A module defining only_pending(items) that returns items whose done attribute is False. Import Item from todo.store.", "defines": "only_pending"}
+{"title": "Add a test for the store", "target_file": "tests/test_add.py", "intent": "A pytest module with a test asserting that Store().add('x') appends one item whose title is 'x'. Import Store from todo.store.", "defines": "test_add_appends"}
+{"title": "Add a test for rendering", "target_file": "tests/test_render.py", "intent": "A pytest module with a test asserting render_item on a pending Item titled 'a' contains 'a'. Import Item from todo.store and render_item from todo.format.", "defines": "test_render_contains_title"}
+{"title": "Add a constants module", "target_file": "todo/constants.py", "intent": "A module defining MAX_TITLE_LENGTH set to 80 and a function max_title_length() returning it.", "defines": "max_title_length"}
+{"title": "Add a simple registry class", "target_file": "todo/registry.py", "intent": "A module defining a class Registry with an add(name) method appending to an internal list and a names() method returning it.", "defines": "Registry"}
+{"title": "Add a test for pending", "target_file": "tests/test_pending.py", "intent": "A pytest module with a test asserting Store().pending() is empty for a new store. Import Store from todo.store.", "defines": "test_pending_empty"}
+{"title": "Add a test for complete", "target_file": "tests/test_complete.py", "intent": "A pytest module with a test asserting complete returns False for a title that was never added. Import Store from todo.store.", "defines": "test_complete_missing"}
+{"title": "Add a test for all", "target_file": "tests/test_all.py", "intent": "A pytest module with a test asserting all() returns two items after adding two. Import Store from todo.store.", "defines": "test_all_returns_both"}
+{"title": "Add a test for render_list", "target_file": "tests/test_list.py", "intent": "A pytest module with a test asserting render_list on an empty list returns an empty string. Import render_list from todo.format.", "defines": "test_render_list_empty"}
