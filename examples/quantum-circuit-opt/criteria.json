@@ -1,0 +1,7 @@
+[
+  {
+    "symbol": "prepare_state",
+    "file": "circuits.py",
+    "check": "from circuits import prepare_state\nfrom qiskit import QuantumCircuit\nfrom qiskit.quantum_info import Operator\n\nref = QuantumCircuit(2)\nref.h(0)\nref.cx(0, 1)\nref.rz(0.5, 0)\n\nqc = prepare_state()\nassert Operator(qc).equiv(Operator(ref)), 'the circuit no longer computes the same unitary'\n\nops = qc.count_ops()\nassert ops.get('cx', 0) <= 1, f\"expected at most 1 CNOT, got {ops.get('cx', 0)}\"\nassert ops.get('x', 0) == 0, f\"the cancelling X pair should be gone, got {ops.get('x', 0)}\"\n"
+  }
+]
