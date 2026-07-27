@@ -92,7 +92,7 @@ def test_empty_content_raises_with_a_diagnostic(monkeypatch):
     """Empty content + reasoning is the documented failure. It must not look
     like a successful empty answer."""
 
-    def fake(system, user, num_ctx, temperature, schema):
+    def fake(system, user, num_ctx, temperature, schema, phase=""):
         return "", {"input_tokens": 10, "output_tokens": 3562}, "x" * 6249
 
     monkeypatch.setattr(model_ollama, "_call_native", fake)
@@ -112,7 +112,7 @@ def test_successful_call_returns_content(monkeypatch, tmp_path):
     monkeypatch.setattr(
         model_ollama,
         "_call_native",
-        lambda *a: ('{"ok": 1}', {"input_tokens": 5, "output_tokens": 7}, ""),
+        lambda *a, **k: ('{"ok": 1}', {"input_tokens": 5, "output_tokens": 7}, ""),
     )
     monkeypatch.setattr(model_ollama, "BACKEND", "ollama")
     assert model_ollama.chat("s", "u", phase="build") == '{"ok": 1}'
@@ -216,3 +216,15 @@ def test_output_is_capped():
 def test_native_body_caps_num_predict():
     body = model_ollama.build_native_body("m", "s", "u", 8192, 0.0, None)
     assert body["options"]["num_predict"] == model_ollama.MAX_OUTPUT_TOKENS
+
+
+def test_plan_phase_gets_a_larger_output_budget():
+    """Reasoning shares the output budget on this model: a 50-token cap spent
+    all 50 thinking and returned empty content. The plan is the longest
+    legitimate output, so it needs the most room."""
+    assert model_ollama.max_tokens_for("plan") > model_ollama.max_tokens_for("build")
+    assert model_ollama.max_tokens_for("plan") < 32768  # still guards the runaway
+
+
+def test_unknown_phase_falls_back_to_the_default_cap():
+    assert model_ollama.max_tokens_for("anything") == model_ollama.MAX_OUTPUT_TOKENS

@@ -96,6 +96,19 @@ DEFAULT_TIMEOUT = int(os.environ.get("NANOLOOP_TIMEOUT", "900"))
 # gets its turn. Fail fast beats fail expensive.
 MAX_OUTPUT_TOKENS = int(os.environ.get("NANOLOOP_MAX_OUTPUT_TOKENS", "4096"))
 
+# The plan is the longest legitimate output (N steps + acceptance criteria) AND
+# on this model the <thought> block is billed against the SAME output budget —
+# a `max_tokens: 50` probe spent all 50 tokens thinking and returned
+# `finish_reason: length` with empty content. Google reports
+# `completion_tokens: 0` for those tokens, so the squeeze is invisible in usage.
+# Too small a cap therefore looks like "the backend returns nothing" rather than
+# "you throttled it". Still far below the 32768 runaway this guards against.
+PHASE_MAX_TOKENS = {"plan": 8192}
+
+
+def max_tokens_for(phase: str) -> int:
+    return PHASE_MAX_TOKENS.get(phase, MAX_OUTPUT_TOKENS)
+
 
 def _endpoint() -> tuple[str, str]:
     base, model = BACKENDS.get(BACKEND, BACKENDS["ollama"])
@@ -103,7 +116,13 @@ def _endpoint() -> tuple[str, str]:
 
 
 def build_native_body(
-    model: str, system: str, user: str, num_ctx: int, temperature: float, schema: dict | None
+    model: str,
+    system: str,
+    user: str,
+    num_ctx: int,
+    temperature: float,
+    schema: dict | None,
+    phase: str = "",
 ) -> dict[str, Any]:
     """Body for Ollama's native /api/chat. Pure, so a test can assert on it."""
     body: dict[str, Any] = {
@@ -114,7 +133,7 @@ def build_native_body(
         "options": {
             "temperature": temperature,
             "num_ctx": num_ctx,
-            "num_predict": MAX_OUTPUT_TOKENS,
+            "num_predict": max_tokens_for(phase),
         },
     }
     if schema is not None:
@@ -167,10 +186,15 @@ def _post(url: str, body: dict, timeout: int, headers: dict | None = None) -> di
 
 
 def _call_native(
-    system: str, user: str, num_ctx: int, temperature: float, schema: dict | None
+    system: str,
+    user: str,
+    num_ctx: int,
+    temperature: float,
+    schema: dict | None,
+    phase: str = "",
 ) -> tuple[str, dict, str]:
     base, model = _endpoint()
-    body = build_native_body(model, system, user, num_ctx, temperature, schema)
+    body = build_native_body(model, system, user, num_ctx, temperature, schema, phase)
     data = _post(f"{base}/api/chat", body, DEFAULT_TIMEOUT)
     msg = data.get("message", {}) or {}
     usage = {"input_tokens": data.get("prompt_eval_count"), "output_tokens": data.get("eval_count")}
@@ -214,7 +238,12 @@ def build_messages(system: str, user: str) -> list[dict]:
 
 
 def _call_openai(
-    system: str, user: str, num_ctx: int, temperature: float, schema: dict | None
+    system: str,
+    user: str,
+    num_ctx: int,
+    temperature: float,
+    schema: dict | None,
+    phase: str = "",
 ) -> tuple[str, dict, str]:
     base, model = _endpoint()
     remote = BACKEND in API_KEY_ENV
@@ -222,7 +251,7 @@ def _call_openai(
         "model": model,
         "messages": build_messages(system, user),
         "temperature": temperature,
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "max_tokens": max_tokens_for(phase),
     }
     if remote:
         # A hosted endpoint has no num_ctx knob — that is a local-runtime concept.
@@ -288,7 +317,7 @@ def chat(
     raw, thinking, err = "", "", None
     usage: dict[str, Any] = {}
     try:
-        raw, usage, thinking = caller(system, user, num_ctx, temperature, schema)
+        raw, usage, thinking = caller(system, user, num_ctx, temperature, schema, phase)
     except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
         err = f"{type(e).__name__}: {e}"
     latency_ms = int((time.monotonic() - t0) * 1000)
@@ -318,7 +347,9 @@ def chat(
     if not raw:
         # Empty content with reasoning present is the failure documented above.
         raise RuntimeError(
-            f"model returned empty content ({len(thinking)} chars of reasoning). "
+            f"model returned empty content ({len(thinking)} chars of reasoning, "
+            f"cap {max_tokens_for(phase)}). Reasoning shares the output budget, "
+            f"so a tight cap starves the answer. "
             f"If reasoning is non-zero, THINK is on — see nanoloop/model_ollama.py."
         )
     return raw

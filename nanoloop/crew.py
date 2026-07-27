@@ -65,8 +65,27 @@ class Step(BaseModel):
     )
 
 
+class Acceptance(BaseModel):
+    """One checkable statement about the FINISHED work.
+
+    Derived from the GOAL, never from the steps. That distinction is the whole
+    point: criteria read off your own plan are circular and pass by
+    construction. Observed failure — goal "add by_tag AND make add accept tags",
+    planner emitted ONE step covering only add(), reported 1/1 ok, and by_tag
+    was never mentioned again. A goal-level criterion catches exactly that.
+    """
+
+    symbol: str = Field(description="Function or class that must exist when done.")
+    file: str = Field(description="Repo-relative file it must be defined in.")
+
+
 class Plan(BaseModel):
     steps: list[Step] = Field(description="Ordered steps. Each edits one file.")
+    acceptance: list[Acceptance] = Field(
+        default_factory=list,
+        description="What must be true when the WHOLE goal is done. Derive from "
+        "the goal itself, not from the steps above.",
+    )
 
 
 class Edit(BaseModel):
@@ -101,8 +120,30 @@ class NewFile(BaseModel):
 
 
 def schema_of(model: type[BaseModel]) -> dict:
-    """JSON Schema for structured decoding. ~198 tok for Plan, ~104 for Edit."""
-    return model.model_json_schema()
+    """JSON Schema for structured decoding, with EVERY field required.
+
+    Pydantic omits any field with a `default=` from `required`, and constrained
+    decoding then treats it as optional — so the model simply does not emit it.
+
+    That made two verification mechanisms silently inert: `Step.defines` came
+    back "" on the very step that should have declared `by_tag`, and
+    `Plan.acceptance` came back `[]`, so plan verification passed vacuously
+    while `by_tag` was missing from the code. Both checks appeared to run and
+    neither could ever fail.
+
+    The Python defaults stay, so code can still build a Step without them; only
+    the schema handed to the model is tightened.
+    """
+    schema = model.model_json_schema()
+
+    def require_all(node: dict) -> None:
+        if node.get("type") == "object" and "properties" in node:
+            node["required"] = list(node["properties"])
+        for defn in node.get("$defs", {}).values():
+            require_all(defn)
+
+    require_all(schema)
+    return schema
 
 
 # ---------------------------------------------------------------------------
@@ -361,18 +402,43 @@ def autofix(workspace: Path | str, path: str) -> None:
 
 
 def defines_symbol(workspace: Path | str, path: str, name: str) -> bool:
-    """Is `name` defined at any level of this Python file?"""
+    """Is `name` defined in this Python file?
+
+    Accepts a DOTTED name (`Store.add`) as well as a bare one. The model writes
+    qualified names naturally, and treating `Store.add` as a literal identifier
+    fails on correct code — observed as a false "not defined" for a method that
+    was right there. A false positive here blocks working code, which is worse
+    than not checking at all.
+    """
     target = Path(workspace) / path
-    if not name or not target.exists() or target.suffix != ".py":
+    if not name:
         return True  # nothing claimed, nothing to check
+    if target.suffix != ".py":
+        return True  # not parseable here; let the gates speak instead
+    if not target.exists():
+        # A name WAS claimed and there is no file to hold it. Returning True
+        # here would let "define by_tag in store.py" pass when store.py does
+        # not exist — the exact silent pass this function exists to prevent.
+        return False
     try:
         tree = ast.parse(target.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
         return False
-    return any(
-        isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) and n.name == name
+    defs = [
+        n
         for n in ast.walk(tree)
-    )
+        if isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+    ]
+    if "." in name:
+        owner, _, member = name.rpartition(".")
+        for node in defs:
+            if isinstance(node, ast.ClassDef) and node.name == owner:
+                return any(
+                    isinstance(c, ast.FunctionDef | ast.AsyncFunctionDef) and c.name == member
+                    for c in node.body
+                )
+        name = member  # owner absent: fall back to the bare member
+    return any(n.name == name for n in defs)
 
 
 class SyntaxErrorInEdit(ValueError):
@@ -566,6 +632,45 @@ def _read_slice(workspace: Path, path: str, limit: int = 12000) -> str:
     except OSError as e:
         return f"[unreadable: {e}]"
     return text if len(text) <= limit else text[:limit] + "\n[...truncated...]"
+
+
+def _grounded(symbol: str, goal: str) -> bool:
+    """Is this criterion actually traceable to the goal?
+
+    The planner invents criteria: a run for "add by_tag and make add accept
+    tags" also demanded `text_item`, a name appearing nowhere in the goal.
+    Enforcing that would fail a correct implementation. A requirement the goal
+    never states cannot be a requirement, so ungrounded criteria are dropped
+    rather than enforced.
+
+    Matching is on the last dotted component and case-insensitive, so
+    `Store.add` is grounded by the goal phrase "Store.add" or plain "add".
+    """
+    if not symbol:
+        return False
+    bare = symbol.rpartition(".")[2]
+    haystack = goal.lower().replace("_", "").replace(" ", "")
+    return bare.lower().replace("_", "") in haystack
+
+
+def verify_plan(workspace: Path | str, plan: Plan, goal: str = "") -> list[str]:
+    """Unmet acceptance criteria, as human-readable strings.
+
+    Per-step verification (Step.defines) cannot see a plan that never covered
+    part of the goal. This closes that hole: the criteria come from the goal, so
+    a missing step surfaces as a missing symbol rather than as a green run.
+
+    Criteria the goal does not mention are ignored — see _grounded().
+    """
+    unmet = []
+    for a in plan.acceptance:
+        if not a.symbol:
+            continue
+        if goal and not _grounded(a.symbol, goal):
+            continue
+        if not defines_symbol(workspace, a.file, a.symbol):
+            unmet.append(f"`{a.symbol}` is not defined in {a.file}")
+    return unmet
 
 
 def run_plan(

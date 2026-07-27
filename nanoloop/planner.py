@@ -33,6 +33,11 @@ to a JSON object of its parameters. A skill step runs deterministic code instead
 of generating source, so prefer one whenever it fits. Leave `skill` empty ("")
 for ordinary code edits. Never invent a skill name that is not listed.
 
+ACCEPTANCE. After the steps, fill `acceptance` with what must be true when the
+WHOLE GOAL is finished: each function or class the goal asks for, and the file
+it belongs in. Read these off the GOAL, not off your steps — if the goal names
+two things and your steps only cover one, `acceptance` must still list both.
+
 Output JSON matching the schema. Nothing else."""
 
 
@@ -74,16 +79,43 @@ def propose_plan(
     user = f"# Goal\n{goal}\n\n# Repo map (path — first docstring)\n{repo_map}"
     if skills_catalog:
         user += f"\n\n# Available skills (name: when to use)\n{skills_catalog}"
-    raw = model_ollama.chat(
-        SYSTEM,
-        user,
-        phase="plan",
-        num_ctx=num_ctx or crew.PHASE_NUM_CTX["plan"],
-        temperature=0.0,
-        schema=schema_of(Plan),
-        tools_offered=crew.PHASE_TOOLS["plan"],
-    )
-    plan = Plan.model_validate(_extract_json(raw))
+    # Greedy first (D7), then retry WITH TEMPERATURE.
+    #
+    # A greedy sample can fall into degenerate repetition and never escape:
+    # observed "items carrying the tags are items carrying the tags are ..." run
+    # to the 4096-token cap, producing unterminated JSON. Re-running at
+    # temperature 0 would reproduce it exactly — sampling is what breaks the
+    # loop. The build phase already survives a bad sample via its repair loop;
+    # planning had no such path and simply crashed with a traceback.
+    last: Exception | None = None
+    for attempt, temperature in enumerate((0.0, 0.3, 0.6)):
+        try:
+            raw = model_ollama.chat(
+                SYSTEM,
+                user,
+                phase="plan",
+                num_ctx=num_ctx or crew.PHASE_NUM_CTX["plan"],
+                temperature=temperature,
+                schema=schema_of(Plan),
+                tools_offered=crew.PHASE_TOOLS["plan"],
+                attempt=attempt,
+            )
+        except RuntimeError as e:
+            # Transient backend failure — an empty completion, a rate limit.
+            # Retrying is precisely the right response, and not catching it here
+            # turned a recoverable hiccup into a traceback that killed the run.
+            last = e
+            continue
+        try:
+            plan = Plan.model_validate(_extract_json(raw))
+            break
+        except (json.JSONDecodeError, ValueError) as e:
+            last = e
+    else:
+        raise RuntimeError(
+            f"the planner returned no valid plan in 3 attempts. Last error: {last}. "
+            f"A truncated reply usually means a repetition loop hit the output cap."
+        ) from last
     calllog.record(
         calllog.CallRecord(
             phase="plan.parsed",

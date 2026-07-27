@@ -116,6 +116,11 @@ def cmd_run(args) -> int:
     for i, s in enumerate(plan.steps):
         con.print(f"  {i + 1}. {s.title}  ({s.target_file})")
 
+    if plan.acceptance:
+        con.print("  acceptance:")
+        for a in plan.acceptance:
+            con.print(f"    - {a.symbol} in {a.file}")
+
     verdict = tools.human_review.invoke(
         {
             "gate": "plan-approval",
@@ -162,7 +167,15 @@ def cmd_run(args) -> int:
         n_candidates=args.n_candidates,
     )
 
-    ok = all(r.ok for r in results) and len(results) == len(plan.steps)
+    # Every step green still does not mean the GOAL is done: the plan itself may
+    # never have covered part of it. Checked against criteria read off the goal.
+    unmet = crew.verify_plan(workspace, plan, args.goal)
+    if unmet:
+        con.print(f"[acceptance] {len(unmet)} criterion(s) NOT met:")
+        for u in unmet:
+            con.print(f"  - {u}")
+
+    ok = all(r.ok for r in results) and len(results) == len(plan.steps) and not unmet
     if ok:
         con.print(
             tools.human_review.invoke(
@@ -173,9 +186,14 @@ def cmd_run(args) -> int:
                 }
             )
         )
+    acc = (
+        f", {len(plan.acceptance) - len(unmet)}/{len(plan.acceptance)} acceptance"
+        if plan.acceptance
+        else ""
+    )
     con.print(
-        f"[done] {sum(r.ok for r in results)}/{len(plan.steps)} steps, "
-        f"{sum(r.model_calls for r in results)} model calls"
+        f"[done] {sum(r.ok for r in results)}/{len(plan.steps)} steps"
+        f"{acc}, {sum(r.model_calls for r in results)} model calls"
     )
     return 0 if ok else 1
 

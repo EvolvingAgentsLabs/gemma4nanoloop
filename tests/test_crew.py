@@ -448,3 +448,114 @@ def test_defines_symbol_finds_methods_inside_classes(tmp_path):
     (tmp_path / "m.py").write_text("class S:\n    def by_tag(self):\n        pass\n")
     assert crew.defines_symbol(tmp_path, "m.py", "by_tag")
     assert not crew.defines_symbol(tmp_path, "m.py", "missing")
+
+
+# --- plan-level acceptance ---------------------------------------------------
+
+
+def test_plan_verification_catches_a_goal_the_steps_never_covered(tmp_path):
+    """The observed hole: goal asked for by_tag AND tags-on-add, the planner
+    emitted one step covering only add(), every step passed, run reported 1/1 ok.
+    Per-step checks cannot see this; the criteria come from the goal."""
+    (tmp_path / "store.py").write_text("def add(title, tags=None):\n    pass\n")
+    plan = crew.Plan(
+        steps=[Step(title="add tags", target_file="store.py", intent="i")],
+        acceptance=[
+            crew.Acceptance(symbol="add", file="store.py"),
+            crew.Acceptance(symbol="by_tag", file="store.py"),
+        ],
+    )
+    unmet = crew.verify_plan(tmp_path, plan)
+    assert len(unmet) == 1
+    assert "by_tag" in unmet[0]
+
+
+def test_plan_verification_passes_when_the_goal_is_covered(tmp_path):
+    (tmp_path / "store.py").write_text("def add():\n    pass\n\n\ndef by_tag():\n    pass\n")
+    plan = crew.Plan(
+        steps=[],
+        acceptance=[
+            crew.Acceptance(symbol="add", file="store.py"),
+            crew.Acceptance(symbol="by_tag", file="store.py"),
+        ],
+    )
+    assert crew.verify_plan(tmp_path, plan) == []
+
+
+def test_a_plan_without_criteria_verifies_trivially(tmp_path):
+    assert crew.verify_plan(tmp_path, crew.Plan(steps=[])) == []
+
+
+def test_acceptance_on_a_missing_file_is_unmet(tmp_path):
+    plan = crew.Plan(steps=[], acceptance=[crew.Acceptance(symbol="f", file="nope.py")])
+    assert crew.verify_plan(tmp_path, plan) != []
+
+
+def test_dotted_symbol_resolves_to_a_method(tmp_path):
+    """`Store.add` is how a model naturally names a method. Treating it as a
+    literal identifier reported a false 'not defined' for correct code — and a
+    false positive blocks working work, which is worse than not checking."""
+    (tmp_path / "s.py").write_text("class Store:\n    def add(self):\n        pass\n")
+    assert crew.defines_symbol(tmp_path, "s.py", "Store.add")
+    assert crew.defines_symbol(tmp_path, "s.py", "add")
+    assert not crew.defines_symbol(tmp_path, "s.py", "Store.missing")
+
+
+def test_dotted_symbol_with_absent_owner_falls_back_to_the_member(tmp_path):
+    (tmp_path / "s.py").write_text("def add():\n    pass\n")
+    assert crew.defines_symbol(tmp_path, "s.py", "Other.add")
+
+
+def test_ungrounded_criteria_are_ignored(tmp_path):
+    """The planner invented `text_item` for a goal that never mentions it.
+    Enforcing an invented requirement fails a correct implementation."""
+    (tmp_path / "s.py").write_text("def by_tag():\n    pass\n")
+    plan = crew.Plan(
+        steps=[],
+        acceptance=[
+            crew.Acceptance(symbol="by_tag", file="s.py"),
+            crew.Acceptance(symbol="text_item", file="s.py"),
+        ],
+    )
+    goal = "Add a by_tag(tag) method to the Store"
+    assert crew.verify_plan(tmp_path, plan, goal) == []
+    # Without the goal there is nothing to ground against, so both are enforced.
+    assert len(crew.verify_plan(tmp_path, plan)) == 1
+
+
+def test_grounded_but_missing_still_fails(tmp_path):
+    (tmp_path / "s.py").write_text("def other():\n    pass\n")
+    plan = crew.Plan(steps=[], acceptance=[crew.Acceptance(symbol="by_tag", file="s.py")])
+    assert crew.verify_plan(tmp_path, plan, "add a by_tag method") != []
+
+
+def test_grounding_tolerates_underscores_and_case():
+    assert crew._grounded("by_tag", "add a BY TAG filter")
+    assert crew._grounded("Store.add", "make add accept tags")
+    assert not crew._grounded("text_item", "add a by_tag method")
+
+
+# --- schema must force the model to emit optional-in-Python fields ----------
+
+
+def test_schema_marks_every_field_required():
+    """Pydantic drops `default=` fields from `required`, and constrained
+    decoding then never makes the model emit them. That left Step.defines as ""
+    on the step that should have declared by_tag, and Plan.acceptance as [] —
+    both checks appeared to run and neither could ever fail."""
+    plan_schema = crew.schema_of(Plan)
+    assert set(plan_schema["required"]) == {"steps", "acceptance"}
+    step_schema = plan_schema["$defs"]["Step"]
+    assert "defines" in step_schema["required"]
+    assert {"skill", "skill_data"} <= set(step_schema["required"])
+
+
+def test_schema_tightening_does_not_break_python_defaults():
+    """Only the schema is tightened; constructing a Step in code still works."""
+    s = Step(title="t", target_file="f.py", intent="i")
+    assert s.defines == "" and s.skill == ""
+    assert crew.Plan(steps=[]).acceptance == []
+
+
+def test_edit_schema_still_requires_its_three_fields():
+    assert set(crew.schema_of(Edit)["required"]) == {"path", "anchor", "replacement"}

@@ -301,6 +301,51 @@ lo crea ahora falla con feedback exacto.
   ~100%. Escribir un fichero entero: falla repetidamente, incluso con el 26B.
   Es exactamente lo que D4 predice, y el motivo de que los anclajes existan.
 
+### F10. Verificación a nivel de plan — y por qué estaba inerte
+
+`Plan.acceptance`: criterios derivados del OBJETIVO, comprobados con `ast` al
+terminar. Cierra el hueco de F9.1: `Step.defines` valida cada paso, pero no ve un
+plan que nunca cubrió parte del objetivo.
+
+**El bug que casi lo deja de adorno.** Con `defines` y `acceptance` implementados
+y testeados, una corrida real seguía dando verde con `by_tag` ausente. Causa:
+
+```
+Plan required: ['steps']                       <- acceptance NO estaba
+Step required: ['title','target_file','intent'] <- defines NO estaba
+```
+
+Pydantic excluye de `required` todo campo con `default=`, y el decodificado
+restringido lo trata como opcional: **el modelo simplemente no lo emitía**.
+`defines=''` en el paso que debía declarar `by_tag`, `acceptance=[]` en el plan.
+Los dos mecanismos parecían ejecutarse y ninguno podía fallar jamás.
+
+`schema_of()` ahora marca todos los campos como `required` en el esquema que ve
+el modelo, conservando los defaults de Python para construir objetos en código.
+
+**Antes / después, mismo objetivo y mismo modelo:**
+
+```
+antes:   1/1 steps, 1 model calls                      exit 0   <- by_tag ausente
+después: 1/1 steps, 1/2 acceptance, 1 model calls      exit 1
+         1 criterion(s) NOT met: `by_tag` is not defined in todo/store.py
+```
+
+Dos falsos positivos que hubo que quitar antes de que sirviera — una aceptación
+que bloquea trabajo correcto es peor que no tenerla:
+
+- **Nombres con punto.** `Store.add` se comparaba como identificador literal y
+  fallaba sobre código correcto. Ahora resuelve clase→método.
+- **Criterios alucinados.** Para *"añade by_tag y haz que add acepte tags"* el
+  planner exigió además `text_item`, que no aparece en el objetivo. `_grounded()`
+  descarta todo criterio que el objetivo no menciona.
+
+Además, en el camino: reintento del planner con temperatura (un bucle degenerado
+a temperatura 0 se reproduce idéntico; el muestreo es lo que lo rompe), reintento
+ante fallo transitorio del backend, y **caps de salida por fase** — el `<thought>`
+comparte el presupuesto de salida, así que un cap de 50 tokens se gastó entero
+pensando y devolvió contenido vacío con `completion_tokens: 0`.
+
 ---
 
 ## 0. Delta between PLAN.md and reality
