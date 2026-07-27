@@ -274,7 +274,9 @@ def cmd_harvest(args) -> int:
     from . import harvest as hv
 
     con = _console()
-    tasks = hv.harvest(args.workspace, args.sources.split(",") if args.sources else None)
+    tasks = hv.harvest(
+        args.workspace, args.sources.split(",") if args.sources else None, args.tests
+    )
 
     if not tasks:
         con.print("[harvest] nothing to do — the repo's signals are all green")
@@ -310,7 +312,7 @@ def cmd_harvest(args) -> int:
 
     # Everything failing right now. A task may leave these alone; it may not
     # add to them. Without this, task 2 can undo task 1 and both report success.
-    baseline = hv.failing_tests(args.workspace)
+    baseline = hv.failing_tests(args.workspace, args.tests)
     if baseline:
         con.print(f"[harvest] baseline: {len(baseline)} test(s) already failing")
 
@@ -337,7 +339,7 @@ def cmd_harvest(args) -> int:
                 _criteria=t.acceptance,
             )
         )
-        regressed = hv.regressions(args.workspace, baseline) if rc == 0 else set()
+        regressed = hv.regressions(args.workspace, baseline, args.tests) if rc == 0 else set()
         if regressed:
             con.print(f"  REGRESSION: {len(regressed)} test(s) newly broken by this task:")
             for r in sorted(regressed)[:5]:
@@ -470,6 +472,12 @@ def cli(argv: list[str] | None = None) -> int:
     sh = sub.add_parser("harvest", help="read work off the repo's failing signals")
     sh.add_argument("--workspace", default="./workspace")
     sh.add_argument("--sources", default="", help="comma-separated: pytest,mypy,ruff")
+    sh.add_argument(
+        "--tests",
+        default="",
+        metavar="PATH",
+        help="scope pytest to this path — required on any real repo",
+    )
     sh.add_argument("--json", default="", metavar="FILE", help="write the tasks as JSON")
     sh.add_argument("--run", action="store_true", help="work through the tasks")
     sh.add_argument("--limit", type=int, default=0, help="stop after N tasks")

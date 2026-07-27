@@ -7,8 +7,8 @@ Este ejemplo existe por **el criterio**, no por la tarea.
 `criteria.json` contiene el mejor criterio de aceptación de todo el proyecto:
 
 ```python
-assert Operator(prepare_state()).equiv(Operator(ref))   # sigue siendo el mismo unitario
-assert qc.count_ops().get("cx", 0) <= 1                 # y usa menos compuertas
+assert Operator(prepare_state()).equiv(Operator(ref))  # sigue siendo el mismo unitario
+assert qc.count_ops().get("cx", 0) <= 1  # y usa menos compuertas
 ```
 
 Es **doble** y **exacto**: correctitud (equivalencia unitaria, matemáticamente
@@ -28,7 +28,7 @@ cx: 3 -> 1     x: 2 -> 0     profundidad: 6 -> 3     unitario idéntico
 **El transpilador de Qiskit hace exactamente lo mismo en 17 ms:**
 
 ```python
-transpile(qc, optimization_level=3)   # cx 3->1, x 2->0, 17 ms, demostrable
+transpile(qc, optimization_level=3)  # cx 3->1, x 2->0, 17 ms, demostrable
 ```
 
 El crew tardó **26 segundos y 3 llamadas al modelo** para llegar al mismo sitio

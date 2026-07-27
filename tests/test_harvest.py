@@ -89,3 +89,28 @@ def test_tasks_serialise_to_json(tmp_path):
     rows = json.loads(harvest.dump(tasks))
     assert rows[0]["source"] == "pytest"
     assert rows[0]["acceptance"][0]["check"]
+
+
+def test_missing_dependencies_are_not_coding_tasks():
+    """A test failing because matplotlib is absent is not something the model
+    can fix by editing code. Measured on PennyLane: the first "failures" a
+    harvest saw were `flaky` and `matplotlib` missing — the `ruff: command not
+    found` failure all over again, at repo scale."""
+    out = "E   ModuleNotFoundError: No module named 'matplotlib'\n"
+    assert harvest.environment_problems(out) == {"matplotlib"}
+
+
+def test_no_missing_modules_reported_for_a_clean_run():
+    assert harvest.environment_problems("2 failed, 3 passed") == set()
+
+
+def test_pytest_can_be_scoped_to_a_path(tmp_path):
+    """Without scoping this runs the whole suite. PennyLane collects 52,740
+    tests — scoping is what makes harvest usable outside a fixture."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "test_a.py").write_text("def test_a():\n    assert False\n")
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "test_b.py").write_text("def test_b():\n    assert False\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "t"\nversion = "0.1.0"\n')
+    scoped = harvest.from_pytest(tmp_path, tests="a")
+    assert len(scoped) == 1 and "test_a" in scoped[0].goal

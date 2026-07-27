@@ -129,13 +129,40 @@ def module_under_test(workspace: Path, test_path: str) -> str:
     return test_path
 
 
-def from_pytest(workspace: Path) -> list[Task]:
-    """One task per failing test. The richest source there is."""
-    code, out = _run(workspace, [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf"])
+MISSING_MODULE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
+
+
+def environment_problems(output: str) -> set[str]:
+    """Modules pytest could not import.
+
+    A test that fails because `matplotlib` is not installed is NOT a coding
+    task: no edit the model can make will fix it, and handing it over burns the
+    budget on the `ruff: command not found` failure all over again — this time
+    at repo scale. Measured on PennyLane: the first "failures" a harvest saw
+    were `flaky` and `matplotlib` missing, nothing to do with the code.
+    """
+    return set(MISSING_MODULE.findall(output))
+
+
+def from_pytest(workspace: Path, tests: str = "") -> list[Task]:
+    """One task per failing test. The richest source there is.
+
+    `tests` scopes the run. Without it this executes the entire suite, which on
+    a real repo is not a harvest cycle: PennyLane collects 52,740 tests. Scoping
+    is not a nicety, it is what makes this usable outside a fixture.
+    """
+    args = [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf"]
+    if tests:
+        args.append(tests)
+    code, out = _run(workspace, args, timeout=1800)
     if code == 0:
         return []
+
+    missing = environment_problems(out)
     tasks = []
     for node_id, message in PYTEST_FAILED.findall(out):
+        if any(m in (message or "") for m in missing):
+            continue  # environment, not code
         path = _file_of(node_id)
         test_name = node_id.rpartition("::")[2]
         tasks.append(
@@ -222,7 +249,7 @@ def from_ruff(workspace: Path) -> list[Task]:
     ]
 
 
-def failing_tests(workspace: Path | str) -> set[str]:
+def failing_tests(workspace: Path | str, tests: str = "") -> set[str]:
     """The set of test node IDs failing right now.
 
     Harvest works on repos that are ALREADY red, so "all gates green" cannot be
@@ -235,21 +262,24 @@ def failing_tests(workspace: Path | str) -> set[str]:
     The right bar for a red repo is a BASELINE: you may leave existing failures
     alone, you may not create new ones.
     """
-    code, out = _run(Path(workspace), [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf"])
+    args = [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf"]
+    if tests:
+        args.append(tests)
+    code, out = _run(Path(workspace), args, timeout=1800)
     if code == 0:
         return set()
     return {node for node, _ in PYTEST_FAILED.findall(out)}
 
 
-def regressions(workspace: Path | str, baseline: set[str]) -> set[str]:
+def regressions(workspace: Path | str, baseline: set[str], tests: str = "") -> set[str]:
     """Tests failing now that were not failing before."""
-    return failing_tests(workspace) - baseline
+    return failing_tests(workspace, tests) - baseline
 
 
 SOURCES = {"pytest": from_pytest, "mypy": from_mypy, "ruff": from_ruff}
 
 
-def harvest(workspace: Path | str, sources: list[str] | None = None) -> list[Task]:
+def harvest(workspace: Path | str, sources: list[str] | None = None, tests: str = "") -> list[Task]:
     """Collect work from the repo's own failing signals.
 
     Order matters: pytest first, because a failing test is the best-specified
@@ -263,7 +293,7 @@ def harvest(workspace: Path | str, sources: list[str] | None = None) -> list[Tas
         if fn is None:
             continue
         try:
-            tasks.extend(fn(workspace))
+            tasks.extend(fn(workspace, tests) if name == "pytest" else fn(workspace))
         except Exception:  # noqa: BLE001 - one broken source must not kill harvest
             continue
     return tasks
