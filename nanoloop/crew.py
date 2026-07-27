@@ -25,6 +25,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -557,7 +558,7 @@ def build_step(
             snapshot.save()  # D8: every candidate starts from a clean tree
 
         ctx.last_error = feedback
-        ctx.file_slice = _read_slice(workspace, step.target_file)
+        ctx.file_slice = _read_slice(workspace, step.target_file, step=step)
         # See Ctx.repo_map: needed only when writing a file from nothing.
         if not (workspace / step.target_file).exists():
             from . import repomap
@@ -627,12 +628,71 @@ def build_step(
     return StepResult(step, False, calls, repairs, kinds, feedback)
 
 
-def _read_slice(workspace: Path, path: str, limit: int = 12000) -> str:
-    """Current contents of the target file, bounded.
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
-    The model must copy an anchor out of this text verbatim, so it is shown in
-    full whenever it fits. Beyond the limit we keep the HEAD — unlike gate
-    output, a source file's structure lives at the top.
+
+def _needles(step: Step | None) -> list[str]:
+    """Identifiers worth looking for, most specific first."""
+    if step is None:
+        return []
+    out = []
+    if step.defines:
+        out.append(step.defines.rpartition(".")[2])
+    for field_text in (step.title, step.intent):
+        out.extend(IDENT_RE.findall(field_text or ""))
+    seen, uniq = set(), []
+    for n in out:
+        low = n.lower()
+        if len(n) > 2 and low not in seen:
+            seen.add(low)
+            uniq.append(n)
+    return uniq
+
+
+def symbol_span(text: str, needles: list[str]) -> tuple[int, int] | None:
+    """Line range (1-based, inclusive) of the definition a step is about.
+
+    Uses the same ast walk as repomap, so "which symbol" is answered the same
+    way in both places. Classes are considered too: adding a method to `Store`
+    means anchoring inside `Store`.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    defs = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+    ]
+    # Needles are ordered most-specific-first, so the first match wins.
+    for needle in needles:
+        for node in defs:
+            if node.name.lower() == needle.lower():
+                end = getattr(node, "end_lineno", None) or node.lineno
+                return node.lineno, end
+    return None
+
+
+def _read_slice(workspace: Path, path: str, limit: int = 12000, step: Step | None = None) -> str:
+    """The part of the target file the model must copy its anchor from.
+
+    Whole file whenever it fits — that is the best case and the common one.
+
+    When it does not fit, truncating from the HEAD (the old behaviour) makes
+    every anchor in the tail UNREACHABLE: the model cannot copy text it was
+    never shown, and the failure surfaces as a repeated `not_found`, which is
+    indistinguishable from "the model cannot copy". Measured: crew.py is 29,735
+    chars, the slice was 12,018, and the last quarter of the file was invisible.
+    42% of a pydantic sample exceeds half the build budget.
+
+    So instead: find the definition the step is about and send a window around
+    it. Failing that, send HEAD **and** TAIL, because appending to a file is the
+    single most common thing a step does and the tail is where you anchor for it.
+
+    Disjoint chunks are rendered with an explicit gap marker and never
+    concatenated silently — an anchor spanning the gap would match nothing, and
+    the model must be able to see that a region is missing.
     """
     p = Path(workspace) / path
     if not p.exists():
@@ -641,7 +701,29 @@ def _read_slice(workspace: Path, path: str, limit: int = 12000) -> str:
         text = p.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         return f"[unreadable: {e}]"
-    return text if len(text) <= limit else text[:limit] + "\n[...truncated...]"
+    if len(text) <= limit:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    span = symbol_span(text, _needles(step)) if path.endswith(".py") else None
+
+    if span:
+        # Centre on the definition, then grow outward to fill the budget so the
+        # model still sees its neighbours (imports, sibling methods).
+        start, end = span[0] - 1, span[1]
+        while start > 0 and len("".join(lines[start - 1 : end])) < limit:
+            start -= 1
+        while end < len(lines) and len("".join(lines[start : end + 1])) < limit:
+            end += 1
+        body = "".join(lines[start:end])
+        head_gap = f"[...{start} earlier lines omitted...]\n" if start else ""
+        tail_gap = f"\n[...{len(lines) - end} later lines omitted...]" if end < len(lines) else ""
+        return f"{head_gap}{body}{tail_gap}"
+
+    half = limit // 2
+    head, tail = text[:half], text[-half:]
+    omitted = len(text) - len(head) - len(tail)
+    return f"{head}\n[...{omitted} chars omitted — anchor in a shown region only...]\n{tail}"
 
 
 def _grounded(symbol: str, goal: str) -> bool:

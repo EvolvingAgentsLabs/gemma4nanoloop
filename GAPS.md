@@ -62,7 +62,7 @@ para que una corrida no pueda parecer más fuerte de lo que es.
 
 ---
 
-## G2. Ficheros grandes: el anchor es inalcanzable — 🔴 bloqueante en repos reales
+## ~~G2~~. Ficheros grandes: el anchor es inalcanzable — ✅ CERRADO
 
 ```
 nanoloop/crew.py   29.735 chars -> slice de 12.018 (truncado por cabeza)
@@ -91,7 +91,31 @@ muestra de pydantic (105 ficheros)
 2. Numerar las líneas del slice para que el modelo ancle por posición.
 3. Subir `PHASE_NUM_CTX["build"]` solo si hace falta — cuesta latencia en local.
 
-Sin esto el crew no puede editar ni su propio `crew.py`.
+**HECHO.** `_read_slice` ya no trunca por la cabeza. Localiza con `ast` la
+definición de la que trata el paso (pistas: `defines`, luego `title`/`intent`) y
+manda una ventana centrada en ella, creciendo hacia fuera hasta llenar el
+presupuesto. Si ningún símbolo casa, manda **cabeza Y cola** — añadir al final es
+lo más común y la cola es donde se ancla.
+
+Sobre el propio `crew.py` (36.041 chars, 937 líneas):
+
+```
+símbolo            línea   antes           ahora
+run_goal            868    INALCANZABLE    visible
+verify_plan         785    INALCANZABLE    visible
+run_check           751    INALCANZABLE    visible
+```
+
+Verificado de punta a punta contra un módulo de 22.229 chars donde `class
+Registry` cae fuera de los primeros 12.000: **1 paso, 1 llamada, 0 reparaciones,
+anchor `exact`**, criterio ejecutable en verde y gates verdes.
+
+Cada región mostrada es byte a byte idéntica al fichero (hay test que lo fija) y
+los huecos van anunciados — un anchor que cruzara el hueco no casaría con nada, y
+el modelo tiene que poder ver que falta algo.
+
+Nota: no numeré las líneas. Chocaría con el copiado literal del anchor, que es la
+propiedad de la que depende todo lo demás.
 
 ---
 
