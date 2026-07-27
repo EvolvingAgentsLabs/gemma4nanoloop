@@ -45,10 +45,30 @@ from typing import Any
 
 from . import calllog
 
+try:  # .env is gitignored; the AI Studio key lives there, never in the repo.
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+# base_url, default model. `aistudio` is Google's OpenAI-compatible shim, used as
+# a measurement ORACLE rather than a development runtime — see ORACLE below.
 BACKENDS = {
     "ollama": ("http://localhost:11434", "gemma4:12b"),
     "litert": ("http://localhost:9379", "gemma4-12b,gpu"),
+    "aistudio": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemma-4-26b-a4b-it"),
 }
+
+# Backends that need a bearer token, and where to find it.
+API_KEY_ENV = {"aistudio": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "AISTUDIO_API_KEY")}
+
+# Gemma served through the Gemini API has historically REJECTED a system role
+# outright (400, "system instruction is not supported"). Folding the system
+# prompt into the user turn keeps one prompt definition across every backend —
+# without this you end up maintaining two prompt variants and the comparison
+# stops being apples-to-apples.
+FOLD_SYSTEM = {"aistudio"}
 
 BACKEND = os.environ.get("NANOLOOP_BACKEND", "ollama")
 
@@ -102,12 +122,29 @@ def build_extra_body(num_ctx: int, schema: dict | None = None) -> dict[str, Any]
     return body
 
 
-def _post(url: str, body: dict, timeout: int) -> dict:
+def api_key() -> str | None:
+    """Bearer token for the active backend, if it needs one."""
+    for var in API_KEY_ENV.get(BACKEND, ()):
+        val = os.environ.get(var)
+        if val:
+            return val
+    return None
+
+
+def _post(url: str, body: dict, timeout: int, headers: dict | None = None) -> dict:
     req = urllib.request.Request(
-        url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", **(headers or {})},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        # The body carries the actual reason (bad model name, system role
+        # unsupported, quota). Without it you get a bare "400" and no lead.
+        detail = e.read().decode("utf-8", "replace")[:600]
+        raise RuntimeError(f"HTTP {e.code} from {url}: {detail}") from e
 
 
 def _call_native(
@@ -121,17 +158,44 @@ def _call_native(
     return msg.get("content") or "", usage, msg.get("thinking") or ""
 
 
+def build_messages(system: str, user: str) -> list[dict]:
+    """Chat messages, folding the system turn where the backend rejects it."""
+    if BACKEND in FOLD_SYSTEM:
+        return [{"role": "user", "content": f"{system}\n\n{user}"}]
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
 def _call_openai(
     system: str, user: str, num_ctx: int, temperature: float, schema: dict | None
 ) -> tuple[str, dict, str]:
     base, model = _endpoint()
-    body = {
+    remote = BACKEND in API_KEY_ENV
+    body: dict[str, Any] = {
         "model": model,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "messages": build_messages(system, user),
         "temperature": temperature,
-        **build_extra_body(num_ctx, schema),
     }
-    data = _post(f"{base}/v1/chat/completions", body, DEFAULT_TIMEOUT)
+    if remote:
+        # A hosted endpoint has no num_ctx knob — that is a local-runtime
+        # concept — but it DOES have a thinking budget, and AI Studio defaults
+        # it HIGH. Same 8x trap as Ollama's /v1, so it is set explicitly.
+        body["reasoning_effort"] = "high" if THINK else "none"
+        if schema is not None:
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "out", "schema": schema, "strict": True},
+            }
+    else:
+        body.update(build_extra_body(num_ctx, schema))
+
+    key = api_key()
+    headers = {"Authorization": f"Bearer {key}"} if key else None
+    data = _post(
+        f"{base}/chat/completions" if remote else f"{base}/v1/chat/completions",
+        body,
+        DEFAULT_TIMEOUT,
+        headers,
+    )
     choice = (data.get("choices") or [{}])[0]
     msg = choice.get("message", {}) or {}
     u = data.get("usage", {}) or {}
@@ -203,6 +267,14 @@ def chat(
 def probe() -> dict[str, Any]:
     """Phase 0 liveness check: does this endpoint answer at all?"""
     base_url, model = _endpoint()
+    if BACKEND in API_KEY_ENV and not api_key():
+        return {
+            "backend": BACKEND,
+            "base_url": base_url,
+            "model": model,
+            "ok": False,
+            "error": f"no API key; set one of {API_KEY_ENV[BACKEND]} (e.g. in .env)",
+        }
     t0 = time.monotonic()
     try:
         out = chat("Reply with the single word: ok.", "ping", phase="probe", num_ctx=512)

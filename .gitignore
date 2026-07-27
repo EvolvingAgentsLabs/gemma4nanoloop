@@ -11,3 +11,5 @@ Memory/.index.json
 Sessions/
 workspace/
 *.egg-info/
+.env
+.env.*

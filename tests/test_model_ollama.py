@@ -117,3 +117,46 @@ def test_successful_call_returns_content(monkeypatch, tmp_path):
     rows = calllog.read(tmp_path / "c.jsonl")
     assert rows[0]["thinking_chars"] == 0
     assert rows[0]["prompt_tokens"] == 5
+
+
+# --- aistudio backend (measurement oracle) ----------------------------------
+
+
+def test_aistudio_model_and_endpoint():
+    base, model = model_ollama.BACKENDS["aistudio"]
+    assert model == "gemma-4-26b-a4b-it"
+    assert base.endswith("/v1beta/openai")
+
+
+def test_system_role_is_folded_for_aistudio(monkeypatch):
+    """Gemma via the Gemini API rejects a system role. Folding keeps ONE prompt
+    definition across backends, so an oracle comparison stays apples-to-apples."""
+    monkeypatch.setattr(model_ollama, "BACKEND", "aistudio")
+    msgs = model_ollama.build_messages("SYS", "USR")
+    assert [m["role"] for m in msgs] == ["user"]
+    assert "SYS" in msgs[0]["content"] and "USR" in msgs[0]["content"]
+
+
+def test_system_role_is_kept_for_local_backends(monkeypatch):
+    monkeypatch.setattr(model_ollama, "BACKEND", "ollama")
+    assert [m["role"] for m in model_ollama.build_messages("S", "U")] == ["system", "user"]
+
+
+def test_api_key_is_read_from_any_accepted_var(monkeypatch):
+    monkeypatch.setattr(model_ollama, "BACKEND", "aistudio")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "k123")
+    assert model_ollama.api_key() == "k123"
+
+
+def test_local_backends_need_no_key(monkeypatch):
+    monkeypatch.setattr(model_ollama, "BACKEND", "ollama")
+    assert model_ollama.api_key() is None
+
+
+def test_probe_reports_a_missing_key_rather_than_failing_obscurely(monkeypatch):
+    monkeypatch.setattr(model_ollama, "BACKEND", "aistudio")
+    for v in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "AISTUDIO_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    out = model_ollama.probe()
+    assert out["ok"] is False and "no API key" in out["error"]
