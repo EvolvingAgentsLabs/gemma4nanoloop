@@ -63,8 +63,26 @@ def _extract_json(raw: str) -> dict:
         raise
 
 
+REPLAN = """
+# THIS IS A SECOND PASS
+
+Work has already been done toward the goal, but these acceptance criteria are
+still NOT satisfied:
+
+{gaps}
+
+Plan ONLY the steps needed to satisfy them. Do not repeat work that is already
+present in the repo map above — check it before planning each step. Keep
+`acceptance` set to the criteria listed here, unchanged."""
+
+
 def propose_plan(
-    goal: str, repo_map: str, *, num_ctx: int | None = None, skills_catalog: str | None = None
+    goal: str,
+    repo_map: str,
+    *,
+    num_ctx: int | None = None,
+    skills_catalog: str | None = None,
+    gaps: list[str] | None = None,
 ) -> Plan:
     """Returns a schema-valid Plan or raises.
 
@@ -79,6 +97,10 @@ def propose_plan(
     user = f"# Goal\n{goal}\n\n# Repo map (path — first docstring)\n{repo_map}"
     if skills_catalog:
         user += f"\n\n# Available skills (name: when to use)\n{skills_catalog}"
+    if gaps:
+        # The repo map is rebuilt before this call, so it already reflects the
+        # work done so far — that is what lets a second pass avoid redoing it.
+        user += REPLAN.format(gaps="\n".join(f"- {g}" for g in gaps))
     # Greedy first (D7), then retry WITH TEMPERATURE.
     #
     # A greedy sample can fall into degenerate repetition and never escape:

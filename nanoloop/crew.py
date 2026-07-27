@@ -699,6 +699,73 @@ def run_plan(
     return out
 
 
+MAX_REPLANS = int(os.environ.get("NANOLOOP_MAX_REPLANS", "2"))
+
+
+@dataclass
+class GoalResult:
+    plans: list[Plan] = field(default_factory=list)
+    steps: list[StepResult] = field(default_factory=list)
+    unmet: list[str] = field(default_factory=list)
+    rounds: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return not self.unmet and all(r.ok for r in self.steps)
+
+
+def run_goal(
+    goal: str,
+    workspace: Path | str,
+    plan_fn,  # (goal, repo_map, gaps) -> Plan
+    propose,
+    *,
+    gates: list[str] | None = None,
+    max_replans: int = MAX_REPLANS,
+    on_plan=None,
+    on_step=None,
+    **kw,
+) -> GoalResult:
+    """Plan -> run -> verify -> REPLAN on the gaps, bounded.
+
+    Detecting an unmet criterion and stopping still leaves the human to finish
+    the job. Replanning closes that: the unmet criteria go back to the planner
+    as the goal of a second pass, with a FRESHLY BUILT repo map so it can see
+    what already exists and not redo it.
+
+    Bounded on purpose. A planner that cannot satisfy a criterion in two extra
+    passes is not going to on the third — it is either misreading the goal or
+    the criterion is wrong, and both need a human. Looping until success would
+    burn tokens forever on an impossible criterion.
+    """
+    from . import repomap
+
+    workspace = Path(workspace)
+    out = GoalResult()
+    gaps: list[str] = []
+
+    for round_no in range(max_replans + 1):
+        out.rounds = round_no + 1
+        plan = plan_fn(goal, repomap.build(workspace), gaps or None)
+        out.plans.append(plan)
+        if on_plan:
+            on_plan(round_no, plan, gaps)
+
+        results = run_plan(plan, goal, workspace, propose, gates=gates, on_step=on_step, **kw)
+        out.steps.extend(results)
+
+        # Criteria carry over: a second plan may drop or reword them, and the
+        # goal's requirements do not change just because the planner forgot one.
+        seen = {(a.symbol, a.file) for p in out.plans for a in p.acceptance}
+        merged = Plan(steps=[], acceptance=[Acceptance(symbol=s, file=f) for s, f in sorted(seen)])
+        out.unmet = verify_plan(workspace, merged, goal)
+        if not out.unmet:
+            return out
+        gaps = out.unmet
+
+    return out
+
+
 __all__ = [
     "Step",
     "Plan",

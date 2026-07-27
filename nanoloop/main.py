@@ -112,30 +112,36 @@ def cmd_run(args) -> int:
         os.environ["HARNESS_HITL"] = "1"
 
     con.print(f"[plan] {args.goal}")
-    plan = propose_plan(args.goal, repomap.build(workspace))
-    for i, s in enumerate(plan.steps):
-        con.print(f"  {i + 1}. {s.title}  ({s.target_file})")
-
-    if plan.acceptance:
-        con.print("  acceptance:")
-        for a in plan.acceptance:
-            con.print(f"    - {a.symbol} in {a.file}")
-
-    verdict = tools.human_review.invoke(
-        {
-            "gate": "plan-approval",
-            "summary": f"{len(plan.steps)} steps for: {args.goal}",
-            "action": "; ".join(s.title for s in plan.steps),
-        }
-    )
-    con.print(f"[gate] {verdict}")
-    if verdict.startswith("REJECTED"):
-        return 2
 
     from . import snapshot as snap_mod
 
     snap = snap_mod.make(workspace, args.snapshot)
     catalog = skills.catalog_text()
+    approved = {"ok": True}
+
+    def _plan_fn(goal, repo_map, gaps):
+        plan = propose_plan(goal, repo_map, gaps=gaps)
+        if gaps:
+            con.print(f"[replan] {len(gaps)} unmet criterion(s) -> new plan")
+        for i, st in enumerate(plan.steps):
+            con.print(f"  {i + 1}. {st.title}  ({st.target_file})")
+        if plan.acceptance:
+            con.print("  acceptance:")
+            for a in plan.acceptance:
+                con.print(f"    - {a.symbol} in {a.file}")
+        # Gate only the FIRST plan: a replan is bounded, targets criteria the
+        # human already approved, and pausing on each round defeats the point.
+        if not gaps:
+            verdict = tools.human_review.invoke(
+                {
+                    "gate": "plan-approval",
+                    "summary": f"{len(plan.steps)} steps for: {goal}",
+                    "action": "; ".join(st.title for st in plan.steps),
+                }
+            )
+            con.print(f"[gate] {verdict}")
+            approved["ok"] = not verdict.startswith("REJECTED")
+        return plan
 
     def _propose(step, ctx_text, feedback, temperature):
         text = ctx_text if not catalog else f"{ctx_text}\n\n# Available skills\n{catalog}"
@@ -149,51 +155,49 @@ def cmd_run(args) -> int:
     def _on_step(i, res):
         status = "ok" if res.ok else "FAILED"
         con.print(
-            f"[step {i + 1}/{len(plan.steps)}] {status} — "
-            f"{res.model_calls} calls, {res.repair_attempts} repairs, "
-            f"anchors={res.anchor_kinds}"
+            f"[step {i + 1}] {status} — {res.model_calls} calls, "
+            f"{res.repair_attempts} repairs, anchors={res.anchor_kinds}"
         )
         if not res.ok:
             con.print(f"  {res.final_error[:400]}")
 
-    results = crew.run_plan(
-        plan,
+    result = crew.run_goal(
         args.goal,
         workspace,
+        _plan_fn,
         _propose,
         gates=None if not args.no_gates else [],
+        max_replans=args.max_replans,
         snapshot=snap,
         on_step=_on_step,
         n_candidates=args.n_candidates,
     )
 
-    # Every step green still does not mean the GOAL is done: the plan itself may
-    # never have covered part of it. Checked against criteria read off the goal.
-    unmet = crew.verify_plan(workspace, plan, args.goal)
-    if unmet:
-        con.print(f"[acceptance] {len(unmet)} criterion(s) NOT met:")
-        for u in unmet:
+    if not approved["ok"]:
+        return 2
+
+    if result.unmet:
+        con.print(
+            f"[acceptance] {len(result.unmet)} criterion(s) NOT met after {result.rounds} round(s):"
+        )
+        for u in result.unmet:
             con.print(f"  - {u}")
 
-    ok = all(r.ok for r in results) and len(results) == len(plan.steps) and not unmet
+    ok = result.ok
     if ok:
         con.print(
             tools.human_review.invoke(
                 {
                     "gate": "pre-ship",
-                    "summary": f"All {len(results)} steps passed gates.",
+                    "summary": f"{len(result.steps)} steps passed, all criteria met.",
                     "action": args.goal,
                 }
             )
         )
-    acc = (
-        f", {len(plan.acceptance) - len(unmet)}/{len(plan.acceptance)} acceptance"
-        if plan.acceptance
-        else ""
-    )
     con.print(
-        f"[done] {sum(r.ok for r in results)}/{len(plan.steps)} steps"
-        f"{acc}, {sum(r.model_calls for r in results)} model calls"
+        f"[done] {sum(r.ok for r in result.steps)}/{len(result.steps)} steps, "
+        f"{result.rounds} plan round(s), "
+        f"{sum(r.model_calls for r in result.steps)} model calls"
     )
     return 0 if ok else 1
 
@@ -227,6 +231,13 @@ def cli(argv: list[str] | None = None) -> int:
     sr.add_argument("--snapshot", default="copy", choices=["copy", "git"])
     sr.add_argument(
         "--n-candidates", type=int, default=crew.DEFAULT_N_CANDIDATES, dest="n_candidates"
+    )
+    sr.add_argument(
+        "--max-replans",
+        type=int,
+        default=crew.MAX_REPLANS,
+        dest="max_replans",
+        help="extra planning rounds when acceptance criteria are unmet",
     )
     sr.set_defaults(fn=cmd_run)
 
