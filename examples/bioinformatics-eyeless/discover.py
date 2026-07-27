@@ -1,14 +1,13 @@
-"""El experimento del ojo de la mosca, ejecutable en tu portátil.
+"""The fly's eye experiment, runnable on your laptop.
 
     python discover.py
 
-Reproduce el ejercicio con el que abre *Developing Bioinformatics Computer
-Skills* (Gibas & Jambeck, O'Reilly 2001): descubrir, sin saber biología, que un
-gen de mosca y una enfermedad humana de los ojos son la misma historia
-evolutiva.
+Reproduces the exercise that opens *Developing Bioinformatics Computer Skills*
+(Gibas & Jambeck, O'Reilly 2001): discovering, without knowing any biology, that
+a fly gene and a human eye disease are the same evolutionary story.
 
-No hace falta red, ni BLAST instalado, ni cuenta en ningún sitio. Dos secuencias
-públicas y un algoritmo de 1981.
+No network, no BLAST installed, no account anywhere. Two public sequences and an
+algorithm from 1981.
 """
 
 from __future__ import annotations
@@ -16,11 +15,11 @@ from __future__ import annotations
 from conserved import align, conserved_blocks
 from sequences import EYELESS_DROME, PAX6_HUMAN
 
-# NCBI sitúa estos dominios en PAX6 humano. Se usan solo para ROTULAR lo que el
-# alineamiento encuentra por su cuenta — no para encontrarlo.
+# NCBI places these domains in human PAX6. They are used only to LABEL what the
+# alignment finds on its own — never to find it.
 DOMAINS = [
-    (4, 136, "paired domain", "se agarra al ADN regulador"),
-    (208, 267, "homeodomain", "el segundo agarre al ADN"),
+    (4, 136, "paired domain", "grips regulatory DNA"),
+    (208, 267, "homeodomain", "the second DNA grip"),
 ]
 
 
@@ -28,7 +27,7 @@ def label(subject_start: int, subject_end: int) -> str:
     for lo, hi, name, what in DOMAINS:
         if subject_start <= hi and lo <= subject_end:
             return f"{name} — {what}"
-    return "región enlazante, mucho más libre de mutar"
+    return "linker, far freer to mutate"
 
 
 def rule(char: str = "─") -> None:
@@ -37,31 +36,31 @@ def rule(char: str = "─") -> None:
 
 def main() -> None:
     rule("═")
-    print("EL EXPERIMENTO DEL OJO DE LA MOSCA")
+    print("THE FLY'S EYE EXPERIMENT")
     rule("═")
 
     print("""
-Dos hechos, conocidos por separado durante décadas:
+Two facts, known separately for decades:
 
-  · La mosca de la fruta tiene un gen llamado `eyeless`. Rómpelo y nacen
-    moscas sin ojos.
-  · Algunas personas nacen con `aniridia`: sin iris. Se sabía que era
-    hereditaria.
+  · The fruit fly has a gene called `eyeless`. Break it and you get flies
+    with no eyes.
+  · Some people are born with `aniridia`: no iris. It was known to be
+    inherited.
 
-Nada en esos dos nombres sugiere que tengan relación. Ni un buscador de texto,
-ni un índice de literatura, ni un catálogo de genes los pondría juntos:
+Nothing in those two names suggests they are related. No text search, no
+literature index, no gene catalogue would ever put them together:
 """)
-    print(f"    'eyeless' contiene 'aniridia'? {'aniridia' in 'eyeless'}")
-    print(f"    'aniridia' contiene 'eyeless'? {'eyeless' in 'aniridia'}")
-    print("    palabras en común: ninguna\n")
+    print(f"    does 'eyeless' contain 'aniridia'? {'aniridia' in 'eyeless'}")
+    print(f"    does 'aniridia' contain 'eyeless'? {'eyeless' in 'aniridia'}")
+    print("    words in common: none\n")
 
-    print("Pero las proteínas no son nombres. Son secuencias:\n")
-    print(f"    eyeless (Drosophila)  {len(EYELESS_DROME):>4} aminoácidos")
+    print("But proteins are not names. They are sequences:\n")
+    print(f"    eyeless (Drosophila)  {len(EYELESS_DROME):>4} amino acids")
     print(f"      {EYELESS_DROME[:58]}...")
-    print(f"    PAX6 (humano)         {len(PAX6_HUMAN):>4} aminoácidos")
+    print(f"    PAX6 (human)          {len(PAX6_HUMAN):>4} amino acids")
     print(f"      {PAX6_HUMAN[:58]}...\n")
 
-    print("A simple vista tampoco dicen nada. Que las compare el ordenador.\n")
+    print("They say nothing to the naked eye either. Let the computer compare them.\n")
     rule()
 
     alignment = align(EYELESS_DROME, PAX6_HUMAN)
@@ -69,8 +68,8 @@ ni un índice de literatura, ni un catálogo de genes los pondría juntos:
     total = sum(b["length"] for b in blocks)
     matched = sum(b["identities"] for b in blocks)
 
-    print(f"ALINEAMIENTO LOCAL (Smith–Waterman, BLOSUM62)   score = {alignment.score:.0f}\n")
-    print(f"{'eyeless':>14}   {'PAX6':>12}   {'largo':>6} {'identidad':>10}   qué es")
+    print(f"LOCAL ALIGNMENT (Smith–Waterman, BLOSUM62)   score = {alignment.score:.0f}\n")
+    print(f"{'eyeless':>14}   {'PAX6':>12}   {'length':>6} {'identity':>10}   what it is")
     for b in blocks:
         print(
             f"{b['query_start']:>6}-{b['query_end']:<7} "
@@ -80,43 +79,43 @@ ni un índice de literatura, ni un catálogo de genes los pondría juntos:
         )
 
     best = max(blocks, key=lambda b: b["percent_identity"])
-    print(f"\n{matched} de {total} residuos alineados son IDÉNTICOS.")
+    print(f"\n{matched} of {total} aligned residues are IDENTICAL.")
     print(
-        f"El mejor bloque: {best['length']} residuos seguidos al "
-        f"{best['percent_identity']:.0f}% de identidad.\n"
+        f"Best block: {best['length']} consecutive residues at "
+        f"{best['percent_identity']:.0f}% identity.\n"
     )
 
-    print("Los primeros 60 residuos de ese bloque, uno sobre otro:\n")
+    print("The first 60 residues of that block, one above the other:\n")
     q = EYELESS_DROME[best["query_start"] - 1 : best["query_end"]][:60]
     s = PAX6_HUMAN[best["subject_start"] - 1 : best["subject_end"]][:60]
     bar = "".join("|" if a == b else " " for a, b in zip(q, s))
-    print(f"    mosca   {q}")
-    print(f"            {bar}")
-    print(f"    humano  {s}\n")
+    print(f"    fly    {q}")
+    print(f"           {bar}")
+    print(f"    human  {s}\n")
 
     rule()
     print("""
-QUÉ SIGNIFICA
+WHAT IT MEANS
 
-Un 93% de identidad en 133 residuos seguidos no ocurre por azar. Entre una
-mosca y un humano, separados por unos 600 millones de años, sobrevive intacto
-justo el trozo que se agarra al ADN — porque cambiarlo rompe la proteína.
-Lo de en medio ha ido derivando libremente: nadie lo estaba mirando.
+93% identity across 133 consecutive residues does not happen by chance. Between
+a fly and a human, separated by some 600 million years, what survives intact is
+exactly the piece that grips DNA — because changing it breaks the protein. What
+lies between has drifted freely: nothing was watching it.
 
-Así que `eyeless` y el gen de la aniridia descienden del mismo gen ancestral.
-El mismo interruptor que enciende el ojo de una mosca enciende el tuyo.
+So `eyeless` and the aniridia gene descend from the same ancestral gene. The
+same switch that turns on a fly's eye turns on yours.
 
-Y una advertencia que el libro subraya, y conviene repetir: esto es una
-HIPÓTESIS fuerte, no una demostración. El parecido de secuencia sugiere
-función compartida; confirmarla exige experimentos. (En este caso se
-confirmaron: el PAX6 de ratón, puesto en una mosca, induce ojos.)
+And a warning the book stresses, worth repeating: this is a strong HYPOTHESIS,
+not a proof. Sequence similarity suggests shared function; confirming it takes
+experiments. (In this case they were done: mouse PAX6, placed in a fly, induces
+eyes.)
 
-LO QUE DE VERDAD IMPRESIONA
+WHAT IS GENUINELY STRIKING
 
-Esto era ciencia de portada en 1995. Hoy son dos descargas públicas, treinta
-líneas de Python y unos segundos en un portátil. La barrera de entrada a este
-tipo de pregunta ya no es el acceso a los datos ni la potencia de cálculo:
-es saber qué preguntar.
+This was front-page science in 1995. Today it is two public downloads, thirty
+lines of Python and a few seconds on a laptop. The barrier to this kind of
+question is no longer access to the data or the computing power: it is knowing
+what to ask.
 """)
     rule("═")
 

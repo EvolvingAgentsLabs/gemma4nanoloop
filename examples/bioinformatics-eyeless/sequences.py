@@ -1,11 +1,11 @@
-"""Las dos proteínas del experimento del ojo de la mosca.
+"""The two proteins from the fly's eye experiment.
 
-Vendidas aquí a propósito: el ejemplo debe correr sin red y dar el mismo
-resultado dentro de cinco años. Las entradas de UniProt cambian — el libro de
-2001 usaba una PAX6 humana de 447 aa desde PIR; hoy son 422 aa, y por eso sus
-coordenadas exactas ya no se reproducen.
+Vendored on purpose: the example must run without a network and give the same
+answer in five years. UniProt entries change — the 2001 book used a 447 aa human
+PAX6 from PIR, today it is 422 aa, which is why the book's exact coordinates no
+longer reproduce.
 
-Descargadas de UniProt el 2026-07-27.
+Downloaded from UniProt on 2026-07-27.
 """
 
 # >sp|P26367|PAX6_HUMAN Paired box protein Pax-6 OS=Homo sapiens OX=9606 GN=PAX6 PE=1 SV=2

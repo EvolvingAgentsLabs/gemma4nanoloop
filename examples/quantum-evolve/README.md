@@ -1,40 +1,39 @@
-# Bucle evolutivo estilo AlphaEvolve
+# An AlphaEvolve-shaped loop
 
-`propose N → puntúa todos → quédate con el mejor → repite`, con un evaluador
-determinista. No es lo que hace el crew, y esa es la gracia.
+`propose N → score all → keep the best → repeat`, with a deterministic
+evaluator. It is not what the crew does, and that is the point.
 
 | | |
 |---|---|
-| **crew** | propone → el primer candidato que **pasa** gana → para. Optimiza para *correcto*. |
-| **este bucle** | propone N → **puntúa** todos → se queda con el mejor → itera. Optimiza para *mejor sujeto a correcto*. |
+| **crew** | proposes → the first candidate that **passes** wins → stop. Optimises for *correct*. |
+| **this loop** | proposes N → **scores** all → keeps the best → iterates. Optimises for *best subject to correct*. |
 
-El crew ya tiene best-of-N, pero toma la primera muestra que supera el gate:
-para un bug, "correcto" **es** todo el requisito. La optimización no tiene ese
-punto de parada — todo candidato correcto sigue siendo comparable con los demás,
-y parar en el primero tira la búsqueda a la basura.
+The crew already has best-of-N, but it takes the first sample that clears the
+gate: for a bug, "correct" **is** the whole requirement. Optimisation has no
+such stopping point — every correct candidate is still comparable to the next,
+and taking the first throws the search away.
 
-El evaluador es la misma idea que `Acceptance.check`, partida en dos:
+The evaluator is the same idea as `Acceptance.check`, split in two:
 
 ```python
-valid = Operator(candidate).equiv(Operator(reference))  # gate duro
-score = sum(qc.count_ops().values())  # gradiente
+valid = Operator(candidate).equiv(Operator(reference))  # a hard gate
+score = sum(qc.count_ops().values())  # a gradient
 ```
 
-Un candidato inválido puntúa cero por corto que sea. Si no, el bucle aprende que
-borrar el circuito es una optimización excelente.
+An invalid candidate scores zero however short it is. Otherwise the loop learns
+that deleting the circuit is an excellent optimisation.
 
-## Resultado
+## Result
 
 ```
-original    10 compuertas, profundidad 8
-transpiler   3 compuertas, profundidad 3   <- el listón
-evolucionado 3 compuertas   en 3 llamadas y 9 s   -> IGUALA al transpilador
+original      10 gates, depth 8
+transpiler     3 gates, depth 3   <- the bar
+evolved        3 gates   in 3 model calls and 9 s   -> MATCHES the transpiler
 ```
 
-Encontró la reducción que **requiere conmutación**, no solo cancelación de
-adyacentes: los dos `rz` estaban separados por un `cx`, y solo se pueden fusionar
-en `rz(0.7)` si sabes que un `rz` sobre el qubit de control conmuta a través del
-`cx`.
+It found the reduction that requires **commutation**, not merely adjacent
+cancellation: the two `rz` were separated by a `cx`, and they only merge into
+`rz(0.7)` if you know an `rz` on the control commutes through the `cx`.
 
 ```python
 qc.h(0)
@@ -42,92 +41,78 @@ qc.rz(0.7, 0)
 qc.cx(0, 1)  # 0.3 + 0.4 = 0.7
 ```
 
-Unitario idéntico, verificado aparte.
+Unitary identical, verified separately.
 
-## El fallo que más enseña
+## The most instructive failure
 
-La primera corrida dio **0/9 candidatos válidos**. El modelo generaba basura:
+The first run produced **0/9 valid candidates**. The model emitted gibberish:
 
 ```python
 qc.h(qubit_0_index_placeholder_for_logic_only_to_be_replaced_by__real_indices_0_and_1)
 qc.cx(0, 0_placeholder_for_logic_only_to_be_redistributed-0_and_1)
 ```
 
-Era **mi prompt**, no el modelo. Decía *"return the complete new body of build()
-as a Python module"* — ambiguo entre "el cuerpo" y "el módulo". Reescrito a
-*"output one complete Python file... every qubit index is a literal integer:
-0 or 1. Never write a placeholder name where a number belongs"*, funcionó a la
-primera.
+That was **my prompt**, not the model. It said *"return the complete new body of
+build() as a Python module"* — ambiguous between the body and the module.
+Rewritten to *"output one complete Python file… every qubit index is a literal
+integer: 0 or 1. Never write a placeholder name where a number belongs"*, it
+worked first try.
 
-**0/9 → 2/3 candidatos válidos por un cambio de redacción.** Antes de concluir
-que un modelo pequeño no puede con una tarea, hay que descartar que el prompt sea
-el que no puede.
+**0/9 → 2/3 valid candidates on wording alone.** Before concluding that a small
+model cannot do a task, rule out that the prompt cannot.
 
-## Y aun así: el transpilador sigue ganando
+## 12B local vs 26B cloud: the first time size mattered
 
-`transpile(optimization_level=3)` da el mismo resultado en **12 ms** con
-garantías. El bucle tardó 9 s. Esto **no** es una recomendación para optimizar
-circuitos con un agente.
+Run end to end with `run --optimize` against both backends:
 
-Lo que sí demuestra es que **el patrón evolutivo funciona con un oráculo exacto**,
-y ese patrón se aplica allí donde *no* hay un transpilador: heurísticas sin
-algoritmo conocido, código que hay que hacer rápido sin cambiar su semántica,
-ajuste de parámetros con una métrica medible. El circuito cuántico es el banco de
-pruebas, no el caso de uso.
-
-## Llevado al crew: `--optimize`
-
-El patrón ya no vive solo en este script. `nanoloop run --optimize FILE` acepta
-un fichero que define `score(workspace) -> float | None` (**menor es mejor**) y
-cambia la estrategia del bucle:
-
-```
-sin scorer   primer candidato que pasa -> para        (1 llamada típica)
-con scorer   puntúa los N, se queda con el mejor      (siempre N llamadas)
-```
-
-Dos cosas que hubo que aprender construyéndolo, ambas descubiertas ejecutando:
-
-1. **Exige snapshot.** Sin árbol limpio por candidato, el candidato 2 ve el edit
-   del 1, su anchor ya no casa, y la población colapsa en una cadena que se
-   acumula. Ahora falla con un mensaje que lo dice, en vez de comportarse raro.
-2. **Necesita conocer al titular.** La primera versión elegía el mejor
-   *candidato* y cantaba victoria aunque ninguno mejorase el punto de partida —
-   una corrida reportó `1/1 steps solved` habiendo ido de 10 compuertas a 10.
-   Una optimización que no optimiza es un fallo, no un éxito plano. Ahora se
-   mide el baseline antes y un candidato que no lo bate no gana.
-
-## 12B local vs 26B cloud: la primera vez que el tamaño importa
-
-Corrido de punta a punta con `run --optimize` contra los dos backends:
-
-| modelo | resultado | óptimo |
+| model | result | optimum |
 |---|---|---|
-| `gemma-4-26b` (cloud) | **10 → 3** compuertas, iguala al transpilador | 3 |
-| `gemma4:12b` (local) | **9 → 7**, luego se planta | 3 |
+| `gemma-4-26b` (cloud) | **10 → 3** gates, matching the transpiler | 3 |
+| `gemma4:12b` (local) | **9 → 7**, then plateaus | 3 |
 
-El 12B quitó los `h` redundantes y dejó intactos `cx×3` y `x×2`. Correcto —el
-unitario se conserva— pero incompleto. Repetido dos veces más, ningún candidato
-mejoró sobre 7 y el paso falló, que es el baseline haciendo su trabajo en vez de
-reportar un éxito plano.
+The 12B removed the redundant `h` gates and left `cx x3` and `x x2` untouched.
+Correct — the unitary is preserved — but incomplete. Run twice more, no
+candidate beat 7 and the step failed, which is the incumbent baseline doing its
+job instead of reporting a flat result as success.
 
-**Esto importa más allá del ejemplo.** En todo el resto del proyecto el 12B y el
-26B empataron: anchor-hit 100% los dos, y el A/B concluyó que un modelo mayor no
-compraba calidad. La optimización es **el primer sitio donde el tamaño del modelo
-se mide de verdad**. Tiene sentido: buscar en un espacio de reescrituras es otra
-tarea que aplicar una regla nombrada a un error nombrado.
+**This matters beyond the example.** Everywhere else in the project the 12B and
+the 26B tied: 100% anchor-hit both, and the A/B concluded a bigger model bought
+no quality. Optimisation is **the first place model size measurably shows up**.
+That makes sense: searching a space of rewrites is a different task from
+applying a named rule to a named error.
 
-## Nota sobre el backend
+## Brought into the crew: `--optimize`
 
-Las corridas contra AI Studio se degradaron tras un día de uso: ~180 s por
-llamada y respuestas vacías, cuando por la mañana tardaban 4 s. El `probe`
-seguía respondiendo, así que era throttling, no caída. El 12B local no tiene ese
-problema y es el objetivo real del proyecto.
+The pattern no longer lives only in this script. `nanoloop run --optimize FILE`
+takes a file defining `score(workspace) -> float | None` (**lower is better**):
 
-## Correrlo
+```
+without a scorer   first candidate that passes -> stop        (1 call typical)
+with a scorer      score all N, keep the best                 (always N calls)
+```
+
+Two things the implementation had to learn, both found by running it:
+
+1. **It requires a snapshot.** Without a clean tree per candidate, candidate 2
+   sees candidate 1's edit, its anchor no longer matches, and the population
+   collapses into one accumulating chain. It now refuses with a message saying
+   so rather than misbehaving quietly.
+2. **It needs the incumbent.** The first version picked the best *candidate* and
+   declared victory even when none beat the starting point — a run reported
+   `1/1 steps solved` having gone from 10 gates to 10. An optimisation that does
+   not optimise is a failure, not a success with a flat result.
+
+## A note on the backend
+
+Runs against AI Studio degraded after a day of use: ~180 s per call and empty
+completions, where the morning saw 4 s. `probe` still answered, so this was
+throttling rather than an outage. The local 12B has no such problem and is the
+project's actual target.
+
+## Running it
 
 ```bash
 python examples/quantum-evolve/evolve.py --generations 3 --candidates 3
 ```
 
-Requiere `qiskit`. Escribe el mejor candidato en `best.py`.
+Requires `qiskit`. Writes the best candidate to `best.py`.

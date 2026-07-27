@@ -1,9 +1,9 @@
-"""El paired domain debe aparecer donde la biología dice que está.
+"""The paired domain must appear where the biology says it is.
 
-Coordenadas 1-based inclusivas, como las reporta BLAST. Los números NO son los
-del libro de 2001 —aquellas entradas de base de datos ya no existen— sino los
-que dan las entradas actuales de UniProt, que están vendidas en sequences.py
-para que este test siga significando lo mismo dentro de cinco años.
+1-based inclusive coordinates, as BLAST reports them. The numbers are NOT the
+book's from 2001 — those database entries no longer exist — but the ones the
+current UniProt entries give, vendored in sequences.py so this test still means
+the same thing in five years.
 """
 
 from conserved import conserved_blocks
@@ -12,9 +12,9 @@ from sequences import EYELESS_DROME, PAX6_HUMAN
 
 def test_paired_domain_is_found():
     blocks = conserved_blocks(EYELESS_DROME, PAX6_HUMAN)
-    assert blocks, "no se encontró ningún bloque conservado"
+    assert blocks, "no conserved block was found"
     paired = max(blocks, key=lambda b: b["percent_identity"])
-    # eyeless 57-189 frente a PAX6 5-137, 1-based inclusivo.
+    # eyeless 57-189 against PAX6 5-137, 1-based inclusive.
     assert paired["query_start"] == 57
     assert paired["query_end"] == 189
     assert paired["subject_start"] == 5

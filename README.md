@@ -1,5 +1,7 @@
 # gemma4nanoloop
 
+![A local model feeding a pipeline of narrowing deterministic gates](docs/img/hero.png)
+
 An autonomous engineering crew that runs entirely on a local **Gemma 4 12B**,
 on a 16 GB fanless MacBook Air M4.
 
@@ -76,6 +78,7 @@ python -m nanoloop.main run "add a remove() method and a test" \
 # Read work off the repo itself — no goal, no criteria, no human
 python -m nanoloop.main harvest --workspace <repo>          # list what it found
 python -m nanoloop.main harvest --workspace <repo> --run    # and work through it
+python -m nanoloop.main harvest --workspace <repo> --run --pr   # ...and open a PR
 
 # With acceptance criteria you wrote (recommended for anything real)
 python -m nanoloop.main run "add a by_tag(tag) method to Store" \
@@ -109,7 +112,8 @@ failure of the work). Env: `NANOLOOP_BACKEND=ollama|litert|aistudio`,
 
 ## Examples
 
-Three worked examples live in `examples/`. They are built around domains with
+Three worked examples live in `examples/` — see [`examples/README.md`](examples/README.md)
+for the overview. They are built around domains with
 unusually good **oracles** — an exact unitary, a documented conserved domain —
 because an oracle is what this project argues autonomy is actually limited by.
 
@@ -142,8 +146,8 @@ years. The biology is identical; the numbers are not.
 The best acceptance criterion in the repo. Dual and mathematically decidable:
 
 ```python
-assert Operator(prepare_state()).equiv(Operator(ref))   # same unitary
-assert qc.count_ops().get("cx", 0) <= 1                 # and fewer gates
+assert Operator(prepare_state()).equiv(Operator(ref))  # same unitary
+assert qc.count_ops().get("cx", 0) <= 1  # and fewer gates
 ```
 
 No stub can satisfy it. Reliability is **not** the same on both models, and the
@@ -173,6 +177,14 @@ error.
 And the honest caveat, in the example's own README: Qiskit's transpiler does the
 same optimisation in **17 ms** with guarantees. The pattern is what transfers —
 to problems that have no transpiler.
+
+## Where the work comes from
+
+![Failing tests in a repo becoming tasks that each carry a lock](docs/img/harvest.png)
+
+`harvest` reads tasks off the repo's own failing signals. A failing test is a
+complete specification: the goal is "make it pass", the acceptance criterion is
+the test itself, and the traceback names the file. Nobody writes either.
 
 ## Eval harness
 

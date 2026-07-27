@@ -1,128 +1,122 @@
-# Próximos pasos
+# Next steps
 
-Estado al cerrar la sesión del **2026-07-27**. Escrito para que alguien (o yo
-mismo) pueda retomar en frío sin releer todo el historial.
+State at the close of **2026-07-27**. Written so that someone — including me —
+can pick this up cold without rereading the whole history.
 
-Lecturas por orden: `README.md` → `GAPS.md` (qué falta, medido) →
-`IMPLEMENTATION.md` §0a (hallazgos F1–F10) → `PLAN.md` (decisiones D1–D8).
+Reading order: `README.md` → `GAPS.md` (what is missing, measured) →
+`IMPLEMENTATION.md` §0a (findings F1–F10) → `PLAN.md` (decisions D1–D8) →
+`AUTONOMY.md` (the thesis).
 
 ---
 
-## Dónde quedó
+## Where it stands
 
-**205 tests verdes**, `ruff` limpio, 15 commits en `main`, publicado en
+**275 tests green**, `ruff` clean, published at
 `EvolvingAgentsLabs/gemma4nanoloop`.
 
-Cerrados esta sesión: los tres huecos que bloqueaban dar una tarea real.
+Closed: every blocker that stood between "supervised executor" and "something
+you can leave alone".
 
 | | |
 |---|---|
-| ~~G1~~ | criterios de aceptación **ejecutables**, y escribibles por ti (`--accept`) |
-| ~~G2~~ | slice **centrado en el símbolo** (ficheros grandes editables) |
-| ~~G7~~ | **preflight**: no arranca en un repo ya roto |
-
-Más: replan acotado sobre criterios incumplidos, skills invocables desde el plan
-(coste 0 llamadas), creación de ficheros con prompt y esquema propios.
-
----
-
-## Lo siguiente, por prioridad
-
-### 1. G3 — estabilizar el planner  🟠 el que más ruido quita
-
-**Síntoma medido:** el mismo objetivo produjo **1, 2, 4 y 5 pasos** en corridas
-distintas, y en una emitió dos pasos idénticos. Un plan mal descompuesto no lo
-arregla el replan: gasta llamadas y multiplica las ocasiones de fallar.
-
-**Qué hacer**
-1. Deduplicar pasos por `(target_file, defines)` antes de ejecutar. Determinista,
-   barato, y ataca el caso observado directamente.
-2. Añadir al eval una medida de **varianza**: 10 corridas del mismo objetivo,
-   reportar la distribución del nº de pasos. Hoy no existe y por eso la
-   inestabilidad solo se ve por accidente.
-
-**Dónde:** `crew.run_plan` (dedup), `eval/run_plans.py` (varianza).
-
-### 2. G4 — generación de ficheros nuevos  🟠
-
-Editar con anclajes: ~100%. Escribir un fichero entero: sigue fallando, incluso
-con el 26B. Ya tiene prompt propio, esquema `NewFile`, `ast.parse` previo y
-`autofix`; aun así es donde se concentran las reparaciones.
-
-**Qué hacer:** medirlo de verdad — un `eval/run_newfiles.py` análogo a
-`run_anchors.py`, con N fixtures que exijan crear un módulo, reportando
-válido/inválido. Sin ese número se está optimizando a ciegas.
-
-**Alternativa que ya funciona:** cubrir con **skills** todo lo que sea plantilla.
-El scaffold de FastAPI salió 3/3 con **0 llamadas al modelo**. Cada plantilla que
-se convierte en skill es una clase de fallo que desaparece.
-
-### 3. G5 — repo map filtrado por relevancia  🟡
-
-~3.260 tok en este repo, crece lineal, `max_files=300` y corta. El planner no
-necesita ver todo el repo sino lo relevante al objetivo.
-
-**Qué hacer:** filtrar por coincidencia léxica con el objetivo antes de mandarlo.
-Si se queda corto, `recall.py` ya tiene EmbeddingGemma montado.
-
-### 4. G6 — visión entre ficheros  🟡 estructural
-
-Cada paso ve UN fichero (D6, deliberado). Un cambio de firma que rompe otro
-módulo solo se detecta si los tests ya lo cubren.
-
-**No ampliar el contexto** — es el anti-patrón de PLAN.md §6. Lo tratable: el
-preflight ya exige que el repo arranque verde; el siguiente escalón sería avisar
-cuando el objetivo toca un símbolo con referencias en otros ficheros (grep sobre
-el índice de `repomap`), aunque sea solo para informar al humano.
-
-### 5. Deuda de PLAN.md que sigue sin tocarse
-
-- **Soak térmico (Phase 4)**: nunca corrido. Es *la* pregunta abierta del
-  hardware. Correr 30+ pasos **en frío** y graficar latencia vs índice de paso;
-  `eval/report.py` ya dibuja la curva. Señal blanda ya observada: p50 subió de
-  17,5 s a 29,8 s sobre los mismos fixtures tras un día de carga.
-- **Anchor-hit con ≥50 fixtures**: hoy son 12 (100%). PLAN.md pide 50, y un repo
-  de 5 ficheros es donde los anclajes son más fáciles.
-- **LiteRT-LM**: instalado pero nunca sirvió. PLAN.md §7 Q2 sigue contestada solo
-  para Ollama.
-- **`num_ctx` sin verificar de verdad**: el comando `verify-ctx` existe pero la
-  comprobación en los logs del servidor no se hizo.
-- **30 queries de recall** (hoy 10) contra un corpus mayor; el actual lo escribí
-  yo, así que query y documento comparten autor y eso favorece el resultado.
+| ~~G1~~ | acceptance criteria are **executable**, and you can write them (`--accept`) |
+| ~~G2~~ | slicing **centred on the symbol** (large files are editable) |
+| ~~G3~~ | planner is deterministic; its broken paths are repaired |
+| ~~G4~~ | whole-file generation measured at **93.8%** |
+| ~~G7~~ | **preflight**: refuses to start in an already-broken repo |
+| ~~AUTONOMY 1–5~~ | harvest, deliver/PR, budget, failure memory |
 
 ---
 
-## Trampas que ya costaron horas — no repetir
+## What is genuinely left
 
-1. **Gemma 4 razona y `/v1` no lo puede apagar.** 222 s vs 27 s en el endpoint
-   nativo, con `content` llegando vacío. Si vuelve a aparecer latencia rara,
-   mirar `thinking_chars` en `calls.jsonl` **antes** que nada.
-2. **Pydantic quita del `required` del schema todo campo con `default=`**, y el
-   decodificado restringido lo trata como opcional: el modelo no lo emite. Dejó
-   `Step.defines` y `Plan.acceptance` inertes — parecían funcionar y no podían
-   fallar jamás. `schema_of()` fuerza `required`; no deshacer.
-3. **El razonamiento comparte el presupuesto de salida.** Un cap pequeño se gasta
-   pensando y devuelve vacío con `completion_tokens: 0`. Ver `PHASE_MAX_TOKENS`.
-4. **Gates verdes ≠ objetivo cumplido.** Por eso existen `Step.defines` y
-   `Plan.acceptance` con `check` ejecutable. Un símbolo que existe no prueba nada.
-5. **Un error del harness es indistinguible de un mal edit** para el loop de
-   reparación. De ahí el preflight.
+### 1. Run it against a large real repo 🔴 the honest gap
+
+Everything is measured against a 5-file fixture and small examples. PennyLane
+was the first real repo it saw, and it immediately exposed two harness gaps
+(unscoped pytest over 52,740 tests; missing optional deps harvested as coding
+tasks). Both are fixed — but the crew has still never *worked* a real repo.
+
+Do this before anything else. It is the only thing that would tell you whether
+any of the numbers generalise.
+
+### 2. The thermal soak 🔴 never run
+
+*The* open hardware question from PLAN.md Phase 4, still unanswered. Run 30+
+steps **from cold** and plot latency against step index; `eval/report.py`
+already draws the curve. Soft signal already seen: p50 went from 17.5 s to
+29.8 s on identical fixtures after a day of load.
+
+### 3. G5 — repo map filtered by relevance 🟡
+
+~3,260 tokens on this repo, grows linearly, `max_files=300` then truncates. The
+planner does not need the whole repo, it needs what is relevant to the goal.
+Lexical matching is enough to start; `recall.py` already has EmbeddingGemma if
+more is needed.
+
+### 4. G6 — cross-file awareness 🟡 structural
+
+Each step sees ONE file (D6, deliberately). A signature change that breaks
+another module is only caught if tests already cover it. **Do not fix this by
+widening the context** — PLAN.md §6 calls that an anti-pattern. The tractable
+version: warn when a goal touches a symbol referenced elsewhere, using the
+`repomap` symbol index.
+
+### 5. Remaining PLAN.md debt
+
+- **≥50 anchor fixtures**: today 12 (100%). A 5-file repo is where anchors are
+  easiest.
+- **LiteRT-LM**: installed, never served. PLAN.md §7 Q2 is answered for Ollama
+  only.
+- **`num_ctx` never truly verified** against the server logs; the `verify-ctx`
+  command exists, the log check was never done.
+- **30 recall queries** (today 10) against a larger corpus. The current one I
+  wrote myself, so query and document share an author, which flatters it.
+- **The crew cannot install dependencies**, and `DEFAULT_GATES` is hardwired to
+  Python.
 
 ---
 
-## Antes de retomar
+## Traps that already cost hours — do not repeat
+
+1. **Gemma 4 reasons, and `/v1` cannot turn it off.** 222 s vs 27 s on the
+   native endpoint, with `content` arriving empty. If strange latency ever
+   reappears, look at `thinking_chars` in `calls.jsonl` **before** anything else.
+2. **Pydantic drops any field with a `default=` from the schema's `required`**,
+   and constrained decoding then treats it as optional: the model does not emit
+   it. That left `Step.defines` and `Plan.acceptance` inert — they appeared to
+   work and could never fail. `schema_of()` forces `required`; do not undo it.
+3. **Reasoning shares the output budget.** A small cap spends itself thinking
+   and returns empty with `completion_tokens: 0`. See `PHASE_MAX_TOKENS`.
+4. **Green gates ≠ goal achieved.** Hence `Step.defines` and `Plan.acceptance`
+   with an executable `check`. A symbol that exists proves nothing.
+5. **A met criterion outranks a failed step.** The mirror image of trap 4, and
+   just as wrong: under `harvest --deliver` it discarded finished work.
+6. **A harness error is indistinguishable from a bad edit** to the repair loop.
+   Hence preflight.
+7. **An exception meaning STOP must not be catchable by a handler meaning
+   RETRY.** `BudgetExhausted` deriving from `RuntimeError` made the planner burn
+   three extra calls and report a false diagnosis.
+
+The pattern behind most of these: **a mechanism that appears to run while being
+incapable of doing its job.** It has recurred five times. Suspect it first.
+
+---
+
+## Before picking this up
 
 ```bash
-source ./env.sh                 # config de Ollama; reiniciar `ollama serve`
+source ./env.sh                 # Ollama config; restart `ollama serve` after
 uv pip install -e ".[dev]"
-python -m pytest -q             # deben salir 205
+python -m pytest -q             # expect 275
 ```
 
-Backends: `NANOLOOP_BACKEND=ollama` (12B local, ~30 s/llamada) o `aistudio`
-(26B, ~4 s/llamada, key en `.env`). El A/B midió **la misma calidad de
-anchor-hit** en ambos, así que el cloud es para iterar rápido — **toda medición
-de aceptación debe cerrarse contra el 12B local**, que es el objetivo real.
+Backends: `NANOLOOP_BACKEND=ollama` (local 12B, ~30 s/call) or `aistudio`
+(26B, ~4 s/call, key in `.env`). The A/B measured **the same anchor-hit quality**
+on both, so the cloud is for fast iteration — **every acceptance measurement
+should close against the local 12B**, which is the real target. Note that AI
+Studio throttled hard after a day of use: ~180 s/call and empty completions.
 
-⚠️ **La key de AI Studio quedó expuesta en el historial del chat de esta sesión.**
-Nunca entró en ningún commit (verificado sobre todo el historial), pero conviene
-rotarla: https://aistudio.google.com/apikey
+⚠️ **The AI Studio key was exposed in this session's chat history.** It never
+entered a commit (verified across the whole history), but rotate it:
+https://aistudio.google.com/apikey

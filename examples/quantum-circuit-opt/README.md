@@ -1,70 +1,71 @@
-# Ejemplo: criterios de aceptación con un oráculo exacto
+# Acceptance criteria with an exact oracle
 
-Este ejemplo existe por **el criterio**, no por la tarea.
+![A dense circuit thinning out to a few gates, with a verification mark](../../docs/img/quantum.png)
 
-## Lo que demuestra
+This example exists for **the criterion**, not for the task.
 
-`criteria.json` contiene el mejor criterio de aceptación de todo el proyecto:
+## What it demonstrates
+
+`criteria.json` holds the best acceptance criterion in the project:
 
 ```python
-assert Operator(prepare_state()).equiv(Operator(ref))  # sigue siendo el mismo unitario
-assert qc.count_ops().get("cx", 0) <= 1  # y usa menos compuertas
+assert Operator(prepare_state()).equiv(Operator(ref))  # still the same unitary
+assert qc.count_ops().get("cx", 0) <= 1  # and uses fewer gates
 ```
 
-Es **doble** y **exacto**: correctitud (equivalencia unitaria, matemáticamente
-decidible) más mejora (conteo de compuertas). Ninguna de las dos mitades admite
-opinión, y un stub no puede satisfacerlas. Es exactamente la forma que
-`AUTONOMY.md` argumenta que necesita la autonomía.
+It is **dual** and **exact**: correctness (unitary equivalence, mathematically
+decidable) plus improvement (gate count). Neither half admits an opinion, and no
+stub can satisfy it. That is precisely the shape `AUTONOMY.md` argues autonomy
+needs.
 
-## Fiabilidad, por modelo
+## Reliability, per model
 
-| modelo | resultado |
+| model | result |
 |---|---|
-| `gemma-4-26b-a4b-it` (cloud) | resuelto: 2/2 pasos, 3 llamadas, 26 s |
-| `gemma4:12b` (local) | **2 de 3 corridas** resueltas; la tercera agotó el presupuesto con el circuito intacto |
+| `gemma-4-26b-a4b-it` (cloud) | solved: 2/2 steps, 3 model calls, 26 s |
+| `gemma4:12b` (local) | **2 of 3 runs** solved; the third exhausted its budget with the circuit untouched |
 
 ```
-cx: 3 -> 1     x: 2 -> 0     profundidad: 6 -> 3     unitario idéntico
+cx: 3 -> 1     x: 2 -> 0     depth: 6 -> 3     unitary identical
 ```
 
-El 12B es **inconsistente** en esta tarea. Cuando acierta, el resultado es
-exactamente el mismo que el del 26B; cuando no, gasta el presupuesto sin tocar
-nada y lo reporta como fallo, que es el comportamiento correcto. Si vas a
-depender de esto, súbele `--n-candidates` o corre contra el modelo mayor.
+The 12B is **inconsistent** on this task. When it lands, the result is exactly
+the 26B's; when it does not, it spends the budget without touching anything and
+reports failure, which is the correct behaviour. If you are going to depend on
+this, raise `--n-candidates` or run the larger model.
 
-Un bug que salió midiendo justo esto: una corrida **logró el objetivo** —criterio
-cumplido, tests verdes, circuito reducido— y aun así salió con `exit 1`, porque un
-paso posterior no encontró nada más que quitar. Bajo `harvest --deliver` eso
-descarta trabajo terminado en vez de commitearlo. Arreglado: un criterio cumplido
-manda sobre un paso fallido, porque los criterios **son** la definición de hecho.
+A bug surfaced while measuring precisely this: one run **achieved the goal** —
+criterion met, tests green, circuit reduced — and still exited 1, because a
+later step could not find anything else to remove. Under `harvest --deliver`
+that discards finished work instead of committing it. Fixed: a met criterion
+outranks a failed step, because the criteria **are** the definition of done.
 
-## Lo que NO demuestra, y conviene decirlo
+## What it does NOT demonstrate, and this needs saying
 
-**El transpilador de Qiskit hace exactamente lo mismo en 17 ms:**
+**Qiskit's own transpiler does exactly the same thing in 17 ms:**
 
 ```python
-transpile(qc, optimization_level=3)  # cx 3->1, x 2->0, 17 ms, demostrable
+transpile(qc, optimization_level=3)  # cx 3->1, x 2->0, 17 ms, provable
 ```
 
-El crew tardó **26 segundos y 3 llamadas al modelo** para llegar al mismo sitio
-que una herramienta determinista y madura resuelve mil veces más rápido y con
-garantías que un LLM no da.
+The crew took **26 seconds and 3 model calls** to arrive where a mature,
+deterministic tool gets a thousand times faster, with guarantees a language
+model does not offer.
 
-Así que esto **no** es un argumento para optimizar circuitos con un agente. Si
-el problema tiene un algoritmo, usa el algoritmo.
+So this is **not** an argument for optimising circuits with an agent. If the
+problem has an algorithm, use the algorithm.
 
-## La lección que sí vale
+## The lesson that does hold
 
-Lo interesante del software cuántico para este proyecto no es que necesite
-agentes — es que tiene **oráculos inusualmente buenos**: equivalencia unitaria,
-simulación de estabilizadores, tests de respuesta conocida. `AUTONOMY.md`
-sostiene que la autonomía está limitada por la densidad de señal verificable, no
-por la inteligencia del modelo. Un dominio rico en oráculos es donde esa tesis
-se puede poner a prueba en serio.
+What makes quantum software interesting to this project is not that it needs
+agents — it is that it has **unusually good oracles**: unitary equivalence,
+stabiliser simulation, known-answer tests. `AUTONOMY.md` argues that autonomy is
+limited by the density of verifiable signal, not by the model's intelligence. An
+oracle-rich domain is where that claim can be tested seriously.
 
-El valor está en **prestar el oráculo**, no en sustituir al transpilador.
+The value is in **borrowing the oracle**, not in replacing the transpiler.
 
-## Cómo correrlo
+## Running it
 
 ```bash
 cp -r examples/quantum-circuit-opt /tmp/qopt
@@ -73,4 +74,4 @@ python -m nanoloop.main run "Remove the redundant gates from prepare_state" \
     --workspace /tmp/qopt --accept /tmp/qopt/criteria.json --max-calls 12
 ```
 
-Requiere `qiskit` en el entorno que corre los gates.
+Requires `qiskit` in the environment that runs the gates.

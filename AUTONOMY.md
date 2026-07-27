@@ -1,233 +1,230 @@
-# Cómo llegar a "crew autónomo" que haga algo real
+# Getting to an autonomous crew that does something real
 
-No es una hoja de ruta de features. Es una tesis, sacada de lo que rompió de
-verdad en este proyecto, y lo que se sigue de ella.
-
----
-
-## La observación que lo cambia todo
-
-Lleva la cuenta de lo que falló en toda la sesión:
-
-| causa | casos |
-|---|---|
-| **runtime / harness** | razonamiento en `/v1` (8×), gates sin venv en PATH, cap de tokens ahogando el plan, repo map sin símbolos, rutas rotas del planner |
-| **verificación mal diseñada** | schema con campos opcionales → dos mecanismos inertes; gates verdes ≠ objetivo hecho; recall@5 saturado; criterios que solo miran existencia |
-| **capacidad del modelo** | generar ficheros enteros. Y poco más. |
-
-Y el A/B lo confirmó: **12B y 26B empatan al 100%** en anchor-hit. Un modelo el
-doble de grande no arregló nada — y habría *tapado* el bug del repo map.
-
-**Tesis: la autonomía no está limitada por la inteligencia del modelo, sino por
-la densidad de señal verificable que le rodea.** Cada vez que convertimos una
-opinión en una comprobación determinista, el 12B se volvió competente. Cada vez
-que dejamos un hueco sin verificar, el sistema mintió en verde.
-
-Corolario incómodo: **invertir en prompts o en modelos más grandes es la
-inversión de peor retorno aquí.** Lo que paga es construir oráculos.
+Not a feature roadmap. A thesis, drawn from what actually broke in this project,
+and what follows from it.
 
 ---
 
-## El cuello de botella real: de dónde salen las tareas
+## The observation that changes everything
 
-Hoy el crew necesita que un humano escriba (a) el objetivo y (b) los criterios de
-aceptación. Eso no es un crew autónomo; es un ejecutor con supervisión.
+Count what failed across the whole build:
 
-Y hay una razón por la que no podemos delegar (b) en el modelo: **ya lo medimos**
-— inventa criterios (`text_item`) y olvida otros. La definición de "hecho" es
-justo lo que peor delega.
-
-Aquí está el giro:
-
-> **Un repo real ya está lleno de tareas que vienen con su criterio de aceptación
-> incorporado. No hace falta que nadie las escriba.**
-
-Un test que falla **es** una especificación completa:
-
-| lo que necesita el crew | lo que da un test que falla |
+| cause | cases |
 |---|---|
-| objetivo | "haz que este test pase" |
-| criterio de aceptación ejecutable | **el propio test** |
-| localización | el traceback dice el fichero y la línea |
-| verificación | `pytest` ya lo dice, sin opinión |
+| **runtime / harness** | reasoning on `/v1` (8×), gates without the venv on PATH, a token cap starving the plan, a repo map with no symbols, broken planner paths |
+| **badly designed verification** | optional schema fields leaving two mechanisms inert; green gates ≠ goal done; a saturated recall@5; criteria that only checked existence |
+| **model capability** | generating whole files. And little else. |
 
-Eso elimina de un golpe los dos eslabones más débiles que medimos. Y no es solo
-tests. Todas estas fuentes traen su propio oráculo:
+And the A/B confirmed it: **the 12B and the 26B tie at 100%** anchor-hit. A model
+twice the size fixed nothing — and would have *masked* the repo-map bug.
 
-| fuente | oráculo | comentario |
+**Thesis: autonomy is limited by the density of verifiable signal around the
+model, not by the model's intelligence.** Every time we turned an opinion into a
+deterministic check, the 12B became competent. Every time we left a gap
+unverified, the system lied in green.
+
+Uncomfortable corollary: **investing in prompts or bigger models is the worst
+return available here.** What pays is building oracles.
+
+---
+
+## The real bottleneck: where tasks come from
+
+The crew needed a human to write (a) the goal and (b) the acceptance criteria.
+That is not an autonomous crew; it is a supervised executor.
+
+And there is a reason (b) cannot be delegated to the model: **we measured it** —
+it invents criteria (`text_item`) and forgets others. The definition of "done" is
+exactly what delegates worst.
+
+Here is the turn:
+
+> **A real repo is already full of tasks that come with their acceptance
+> criterion attached. Nobody has to write them.**
+
+A failing test **is** a complete specification:
+
+| what the crew needs | what a failing test gives |
+|---|---|
+| a goal | "make this test pass" |
+| an executable acceptance criterion | **the test itself** |
+| a location | the traceback names the file |
+| a verdict | `pytest`, which has no opinion |
+
+That removes both weak links at once. And it is not only tests. All of these
+carry their own oracle:
+
+| source | oracle | note |
 |---|---|---|
-| test que falla | el test | el caso perfecto |
-| `mypy` error | `mypy` | localizado, verificable, abundante |
-| `ruff` no auto-fixable | `ruff` | ya tenemos autofix para el resto |
-| `TODO`/`FIXME` | ninguno ⚠️ | necesita criterio humano; peor candidato |
-| hueco de cobertura | el test que escribes | invierte el problema: la tarea *es* escribir el test |
-| dependencia desactualizada | la suite entera | riesgo alto, señal clarísima |
+| failing test | the test | the perfect case |
+| `mypy` error | `mypy` | located, verifiable, plentiful |
+| `ruff` not auto-fixable | `ruff` | autofix already handles the rest |
+| `TODO`/`FIXME` | none ⚠️ | needs a human criterion; the worst candidate |
+| coverage gap | the test you write | inverts the problem: the task *is* writing the test |
+| stale dependency | the whole suite | high risk, very clear signal |
 
-**HECHO.** `nanoloop harvest` corre los gates, parsea los fallos y emite tareas
-con su criterio adjunto. `--run` las trabaja una a una.
+**DONE.** `nanoloop harvest` runs the gates, parses the failures and emits tasks
+with their criterion attached. `--run` works through them.
 
-Probado de punta a punta: repo con un `summarize()` que devolvía `"TODO"` y un
-test que lo especificaba. Sin objetivo ni criterio escritos a mano:
+Tested end to end: a repo whose `summarize()` returned `"TODO"` against a test
+specifying it. With no goal and no criteria written by hand:
 
 ```
 [harvest] 1 task(s) from the repo
   1. [pytest] Make the failing test ...::test_summarize_counts pass
-     fix in:   todo/store.py          <- el CÓDIGO, no el test
+     fix in:   todo/store.py          <- the CODE, not the test
      oracle:   1 executable criterion
 === task 1: SOLVED ===   1/1 steps, 1 model call
 ```
 
-Dos detalles que decidían si esto servía o no:
+Two details that decided whether this was worth anything:
 
-- **La tarea apunta al código bajo prueba, no al fichero de test.** Se infiere de
-  los imports del test. Apuntar al test invita a editarlo hasta que pase, que es
-  el único resultado que dejaría todo el ejercicio sin valor. El objetivo además
-  lo dice explícito: *"Fix the code under test, not the test itself."* Verificado:
-  el test quedó intacto byte a byte.
-- **El preflight se salta a propósito** en `--run`. El repo ESTÁ rojo, y ese rojo
-  es el trabajo; negarse a arrancar haría harvest inútil por construcción.
+- **The task points at the code under test, not the test file.** It is inferred
+  from the test's imports. Pointing at the test invites editing it until it
+  passes — the one outcome that would make the whole exercise worthless. The
+  goal says so explicitly: *"Fix the code under test, not the test itself."*
+  Verified: the test was left byte-identical.
+- **Preflight is skipped on purpose** under `--run`. The repo IS red, and that
+  red is the work; refusing to start would make harvest useless by construction.
 
-No se cosechan `TODO`/`FIXME`: no traen oráculo, así que el "hecho" sería opinión
-del modelo — justo lo que este módulo existe para evitar.
-
----
-
-## La segunda pieza: el entregable debe ser un PR, no un directorio
-
-Ahora mismo el crew muta un workspace. Eso obliga al humano a estar delante.
-
-Si el entregable es **una rama + commits + una descripción de qué hizo y qué no
-pudo**, el humano entra de forma asíncrona — que es lo único que hace la
-autonomía a la vez útil y segura. Revisar un PR es barato; vigilar un proceso
-no.
-
-Además fuerza algo sano: el crew tiene que **explicar su trabajo**, y ya tiene
-todo el material (`calls.jsonl`, criterios cumplidos/incumplidos, pasos, fixes
-del plan). No hay que pedirle al modelo que lo redacte — se genera del log.
-
-**HECHO.** `--deliver` crea una rama, un commit por tarea resuelta, y
-`NANOLOOP-REPORT.md` generado de los datos. `--pr` empuja y abre el PR (opt-in:
-publicar es hacia fuera, no algo que hacer por defecto). Lo no resuelto va
-**primero** en el reporte y **nunca se commitea**.
-
-Probado: repo git con dos specs sin implementar, sin objetivo ni criterios
-escritos a mano → **2/2 resueltas, 4 tests en verde, diff de 1 fichero**, dos
-commits en `nanoloop/harvest-pytest`, `main` intacto.
-
-Tres bugs que solo aparecieron al hacerlo de verdad:
-
-1. **`git add -A` metía `__pycache__`** en los commits; el diff a revisar era
-   mayormente bytecode.
-2. **Sin gates no hay red entre tareas.** Puse `no_gates=True` porque el repo
-   está rojo — y la tarea 2 deshizo la 1 reportando ambas como resueltas. La
-   semántica correcta para un repo rojo no es "sin gates" sino **baseline**:
-   puedes dejar los fallos que ya había, no puedes añadir nuevos.
-   `harvest.regressions()` lo comprueba y revierte la tarea que regresa.
-3. **La fusión de criterios entre rondas descartaba el `check`.** Reconstruía
-   `Acceptance(symbol, file)` perdiendo el ejecutable, así que la verificación
-   caía a "¿existe el nombre?" — y una tarea que commiteó un `summarize()` que
-   devolvía un dict se reportó resuelta porque la función de test seguía
-   existiendo. **La misma forma que el bug del schema: una comprobación que
-   aparenta correr y no puede fallar.** Es el error que más veces ha aparecido
-   en este proyecto.
-
-Y la cascada funciona: arreglados los tests, harvest encontró acto seguido un
-error de **mypy** en el código recién escrito (`list[str]` donde iba `list[Item]`)
-que los tests no cazan porque en runtime da igual.
+`TODO`/`FIXME` are deliberately not harvested: no oracle means "done" would be
+the model's opinion — exactly what this module exists to avoid.
 
 ---
 
-## La tercera: saber cuándo parar y cuándo rendirse
+## The second piece: the deliverable is a PR, not a directory
 
-Un crew autónomo necesita presupuesto y necesita **rendirse bien**. Hoy solo
-está acotado el replan.
+The crew used to mutate a working tree, which forces a human to stand over it.
 
-- **Presupuesto por tarea** ✅ `--max-calls`, `--max-seconds`, `--max-tokens`.
-  Se comprueba **antes** de cada llamada, nunca después: empezar trabajo que no
-  puedes pagar desperdicia lo más caro del bucle.
-- **Rendirse es un resultado válido** ✅. El reporte lo marca como
-  **"stopped on budget"**, distinto de un criterio incumplido: uno le dice al
-  revisor *sube el límite*, el otro *la tarea puede estar mal o ser demasiado
-  difícil*.
+If the deliverable is **a branch, commits, and an account of what it did and what
+it could not**, the human enters asynchronously — the only thing that makes
+autonomy both useful and safe. Reviewing a PR is cheap; supervising a process is
+not.
 
-Probado con `--max-calls 1` (imposible de cumplir): se rinde sin traceback,
-**0 commits**, y el reporte explica exactamente en qué se gastó. Con
-`--max-calls 10`: 1/1 resuelta.
+It also forces something healthy: the crew has to **explain its work**, and it
+already has the material (`calls.jsonl`, criteria met and unmet, steps, plan
+repairs). Nobody needs to ask the model to write it — it is generated from the
+log.
 
-Un bug que costó encontrar y merece recordarse: `BudgetExhausted` heredaba de
-`RuntimeError`, y el retry del planner captura `RuntimeError` para fallos
-transitorios. **"Deja de gastar" era indistinguible de "reinténtalo"** — el
-planner quemó tres llamadas más y reportó un falso *"no valid plan in 3
-attempts"*. Ahora hereda de `Exception` a secas: una excepción que significa
-PARAR no puede ser capturable por un handler que significa REINTENTAR.
-- **Memoria de fallos** ✅ `failmem.py`. Cada intento queda registrado
-  (`solved` / `unmet` / `gave_up` + el motivo exacto) y los fallos relevantes se
-  inyectan en el prompt del planner en la primera pasada.
+**DONE.** `--deliver` creates a branch, one commit per solved task, and a
+`NANOLOOP-REPORT.md` generated from the data. `--pr` pushes and opens the pull
+request (opt-in: publishing is outward-facing, not something to do by default).
+Unsolved work goes **first** in the report and is **never committed**.
 
-  **Lo delicado no es guardar, es la obsolescencia.** Un fallo recordado que ya
-  se arregló es *peor* que no tener memoria: le dice al planner que evite algo
-  que ahora funciona, y a diferencia de una memoria ausente, una equivocada
-  dirige activamente. Por eso **todo éxito posterior invalida** los fallos del
-  mismo trabajo, y nada que un éxito haya contradicho vuelve a recordarse.
+Tested: a git repo with two unimplemented specs, no goal and no criteria written
+by hand → **2/2 solved, 4 tests green, a one-file diff**, two commits on
+`nanoloop/harvest-pytest`, `main` untouched.
 
-  Verificado en vivo: corrida 1 con `--max-calls 1` → `gave_up` registrado;
-  corrida 2 con presupuesto suficiente → resuelto, 3 tests verdes; después, la
-  lección desaparece por superseded.
+Three bugs that only appeared by doing it for real:
 
-  Un bug del camino: la huella del objetivo se comparaba por **igualdad exacta**
-  de conjuntos de palabras, así que *"add by_tag to Store"* no reconocía su
-  propio fallo registrado como *"implement by_tag(tag) on Store"* — una palabra
-  de más y la memoria era ciega. Ahora se compara por **solapamiento**, que es lo
-  que hace que una huella "lossy" sea de verdad lossy.
+1. **`git add -A` swept `__pycache__`** into the commits; the diff a human would
+   review was mostly bytecode.
+2. **Without gates there is no net between tasks.** I passed `no_gates=True`
+   because the repo is red — and task 2 undid task 1 while both reported
+   success. The right bar for a red repo is not "no gates" but a **baseline**:
+   you may leave the failures that were already there, you may not add new ones.
+   `harvest.regressions()` checks and reverts the offending task.
+3. **Merging criteria across rounds dropped the `check`.** It rebuilt
+   `Acceptance(symbol, file)` and lost the executable part, so verification fell
+   back to "does this name exist" — and a task that committed a `summarize()`
+   returning a dict was reported solved because the test function still existed.
+   **Same shape as the schema bug: a check that appears to run and cannot fail.**
+   It is the error that has recurred most in this project.
 
-  Se guarda como JSONL, no como notas del grafo de conocimiento: un intento es un
-  registro estructurado que se consulta por fichero exacto, no prosa para buscar
-  semánticamente. `memory.py` sigue siendo el sitio de los hechos durables del
-  proyecto; esto es una caja negra de vuelo.
+And the cascade works: with the tests fixed, harvest immediately found a **mypy**
+error in the freshly written code (`list[str]` where `list[Item]` belonged) that
+the tests cannot catch because at runtime it makes no difference.
 
 ---
 
-## Lo que NO haría
+## The third: knowing when to stop, and how to give up
 
-Anti-patrones que suenan a autonomía y son retrocesos:
+An autonomous crew needs a budget and needs to **give up well**.
 
-- **Devolverle el control al modelo** (un orquestador LLM que decide qué hacer).
-  Es exactamente lo que PLAN.md D1 quitó, y medimos por qué.
-- **Modelos más grandes** para tapar huecos de verificación. El A/B dice que no
-  compra calidad; y tapa bugs, que es peor.
-- **Más contexto** para que "vea más". PLAN.md §6 lo llama anti-patrón: si un
-  paso necesita más, el paso es demasiado grande.
-- **Que el crew escriba sus propios criterios sin ancla.** Ya inventa. Los
-  criterios vienen del repo (un test) o de un humano.
-- **Autonomía sin marcha atrás.** Todo debe caber en un PR revocable.
+- **Per-task budget** ✅ `--max-calls`, `--max-seconds`, `--max-tokens`. Checked
+  **before** each call, never after: starting work you cannot pay for wastes the
+  most expensive thing in the loop.
+- **Giving up is a valid result** ✅. The report marks it **"stopped on budget"**,
+  distinct from an unmet criterion: one tells the reviewer *raise the limit*, the
+  other *the task may be wrong or too hard*.
+
+Tested with `--max-calls 1` (impossible to satisfy): it gives up with no
+traceback, **zero commits**, and a report accounting for the spend. With
+`--max-calls 10`: 1/1 solved.
+
+A bug worth remembering: `BudgetExhausted` derived from `RuntimeError`, and the
+planner's retry catches `RuntimeError` for transient backend trouble. **"Stop
+spending" was indistinguishable from "try again"** — the planner burned three
+more calls and reported a bogus *"no valid plan in 3 attempts"*. It now derives
+from `Exception`: something that means STOP must not be catchable by a handler
+that means RETRY.
+
+- **Failure memory** ✅ `failmem.py`. Every attempt is recorded (`solved` /
+  `unmet` / `gave_up` plus the exact reason) and relevant failures are injected
+  into the planner's prompt on the first pass.
+
+  **The dangerous part is staleness, not storage.** A remembered failure that has
+  since been fixed is *worse* than no memory: it steers the planner away from
+  something that now works, and unlike a missing memory, a wrong one actively
+  misleads. So any later success **supersedes** the failures for the same work.
+
+  Verified live: run 1 with `--max-calls 1` → `gave_up` recorded; run 2 with a
+  real budget → solved, 3 tests green; afterwards the lesson is gone, superseded.
+
+  A bug on the way: the goal fingerprint was compared by **exact set equality**,
+  so *"add by_tag to Store"* did not recognise its own failure recorded as
+  *"implement by_tag(tag) on Store"* — one extra word and the memory was blind.
+  Overlap is what makes a lossy key actually lossy.
+
+  Stored as JSONL rather than knowledge-graph notes: an attempt is a structured
+  record queried by exact file, not prose to search semantically. `memory.py`
+  remains the home for durable project facts; this is a flight recorder.
 
 ---
 
-## Orden que propongo
+## What I would NOT do
 
-| # | Qué | Por qué |
+Anti-patterns that sound like autonomy and are regressions:
+
+- **Handing control back to the model** (an LLM orchestrator deciding what to
+  do). That is exactly what PLAN.md D1 removed, and we measured why.
+- **Bigger models** to paper over verification gaps. The A/B says it buys no
+  quality, and it masks bugs, which is worse.
+- **More context** so it "sees more". PLAN.md §6 calls this an anti-pattern: if
+  a step needs more, the step is too big.
+- **Letting the crew write its own criteria unanchored.** It invents. Criteria
+  come from the repo (a test) or from a human.
+- **Autonomy with no way back.** Everything must fit in a revocable PR.
+
+---
+
+## The order I proposed, and where it stands
+
+| # | what | why |
 |---|---|---|
-| ~~1~~ | ~~`harvest`~~ ✅ **hecho** — tareas desde pytest/mypy/ruff | elimina los dos eslabones débiles a la vez |
-| ~~2~~ | ~~entregable = rama + PR~~ ✅ **hecho** | hace la supervisión asíncrona |
-| ~~3~~ | ~~presupuesto por tarea + rendirse~~ ✅ **hecho** | sin esto, autónomo = descontrolado |
-| ~~4~~ | ~~memoria de fallos~~ ✅ **hecho** | deja de repetir el mismo error |
-| ~~5~~ | ~~G4: medir la creación de ficheros~~ ✅ **93,8%** | resultó ser mucho menos límite del que parecía |
+| ~~1~~ | ~~`harvest`~~ ✅ tasks from pytest/mypy/ruff | removes both weak links at once |
+| ~~2~~ | ~~branch + PR with a report generated from the log~~ ✅ | makes supervision asynchronous |
+| ~~3~~ | ~~per-task budget + giving up as a result~~ ✅ | without it, autonomous means uncontrolled |
+| ~~4~~ | ~~failure memory~~ ✅ | stops repeating the same mistake |
+| ~~5~~ | ~~G4: measure whole-file generation~~ ✅ **93.8%** | turned out to be far less of a limit than it looked |
 
-Con 1+2+3 esto pasa de "ejecutor supervisado" a algo que se le puede soltar en un
-repo con tests y volver a mirarlo al rato. **No porque el modelo sea más listo,
-sino porque cada paso tiene un oráculo detrás.**
+All five are done. Not because the model got smarter — it is the same 12B — but
+because every step now has an oracle behind it.
 
-## La prueba honesta de que funciona
+## The honest test that it works
 
-No "resolvió una tarea". Esto:
+Not "it solved a task". This:
 
-> Apuntar el crew a un repo con la suite en rojo, volver en una hora, y encontrar
-> un PR que arregla un subconjunto de los fallos, con los tests como prueba, y un
-> reporte explicando los que no pudo y por qué.
+> Point the crew at a repo with a red suite, come back in an hour, and find a PR
+> fixing a subset of the failures, with the tests as proof, and a report
+> explaining the ones it could not and why.
 
-Ese es el listón. Todo lo de arriba existe para llegar ahí.
+That is the bar. Everything above exists to get there, and the pieces are now in
+place. What has **not** been done is running it against a large real repo, or the
+thermal soak on the fanless Air. Those two numbers would say whether the thesis
+holds outside the laboratory.
 
 ---
 
-*Escrito 2026-07-27, tras cerrar G1, G2, G3 y G7. Contexto en `GAPS.md` y
-`NEXT-STEPS.md`; los hallazgos medidos en `IMPLEMENTATION.md` §0a.*
+*Written 2026-07-27. Context in `GAPS.md` and `NEXT-STEPS.md`; the measured
+findings in `IMPLEMENTATION.md` §0a.*

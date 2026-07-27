@@ -1,181 +1,146 @@
-# Qué falta para una tarea real
+# What is missing for a real task
 
-Análisis medido, no especulado. Cada hueco lleva la evidencia que lo demuestra y
-lo que costaría cerrarlo. Ordenados por lo que más te va a doler primero.
+Measured analysis, not speculation. Every gap carries the evidence that
+demonstrates it and what closing it would cost. Ordered by what will hurt first.
 
-Contexto: el loop **funciona** — plan → pasos → gates → verificación → replan,
-177 tests, tareas reales resueltas de punta a punta. Lo de abajo es lo que separa
-"resuelve tareas de juguete de forma fiable" de "le doy una tarea real".
+Context: the loop **works** — plan → steps → gates → verification → replan,
+275 tests, real tasks solved end to end. What follows is what separates
+"reliably solves toy tasks" from "I can hand it a real one".
 
 ---
 
-## ~~G1~~. La aceptación comprueba que EXISTE, no que FUNCIONA — ✅ CERRADO
+## ~~G1~~. Acceptance checked that a name EXISTS, not that it WORKS — ✅ CLOSED
 
-Es el hueco más grande y el más fácil de pasar por alto, porque todo sale verde.
+The largest gap, and the easiest to miss, because everything came out green.
 
 ```python
 class Store:
     def by_tag(self, tag):
-        return []  # stub: siempre vacío
+        return []  # stub: always empty
 ```
 ```
-criterio `by_tag` sobre ese stub  ->  CUMPLIDO
+criterion `by_tag` against that stub  ->  SATISFIED
 ```
 
-`defines_symbol()` pregunta *"¿existe este nombre?"*. Un stub, un `pass`, o una
-implementación al revés pasan igual. Los gates tampoco lo salvan: `ruff` no juzga
-semántica y `pytest` solo ejecuta los tests que YA existen — si la función es
-nueva, no hay test que la cubra.
+`defines_symbol()` asked *"does this name exist?"*. A stub, a `pass`, or a
+backwards implementation all passed. The gates did not save it either: `ruff` has
+no opinion on semantics and `pytest` only runs tests that ALREADY exist — if the
+function is new, nothing covers it.
 
-Encadenado con el replan esto es peor, no mejor: el replan da por satisfecho un
-criterio en cuanto aparece el símbolo, así que deja de insistir justo cuando el
-código está vacío.
+Chained with replan it was worse, not better: replan considered a criterion
+satisfied the moment the symbol appeared, so it stopped insisting exactly when
+the code was empty.
 
-**Qué haría:** que `Acceptance` deje de ser un nombre y pase a ser una
-**aserción ejecutable** — un fragmento de pytest que el grafo corre:
-
-```python
-class Acceptance(BaseModel):
-    test: str  # "s = Store(); s.add('a', ['x']); assert s.by_tag('x')"
-    file: str
-```
-
-Determinista, sin opinión del modelo, y encaja con D3. Y para una tarea real de
-verdad: **los criterios los escribes tú**, no el planner. El modelo demostró que
-inventa criterios (`text_item`) y que olvida otros; el objetivo y su definición
-de "hecho" son justo lo que no conviene delegar.
-
-**HECHO.** `Acceptance.check` es ahora Python ejecutable que el grafo corre desde
-la raíz del repo, con timeout y borrando la sonda después. El mismo stub:
+**DONE.** `Acceptance.check` is now executable Python, run by the graph from the
+repo root, time-bounded, with the probe file deleted afterwards. The same stub:
 
 ```
-solo nombre : CUMPLIDO            <- el hueco
-con check   : `by_tag` exists but its check failed: AssertionError
+name only : SATISFIED            <- the gap
+with check: `by_tag` exists but its check failed: AssertionError
 ```
 
-Y `--accept criterios.json` deja que **los escribas tú**, ignorando los del
-planner — verificado de punta a punta: mis dos criterios sobrevivieron el replan
-y forzaron una segunda ronda hasta cumplirse (5/5 pasos, 2 rondas, 6 llamadas).
+And `--accept criteria.json` lets **you** write them, ignoring the planner's —
+verified end to end: my two criteria survived a replan and forced a second round
+until both passed (5/5 steps, 2 rounds, 6 model calls).
 
-`NANOLOOP_REQUIRE_CHECKS=1` trata como incumplido cualquier criterio sin check,
-para que una corrida no pueda parecer más fuerte de lo que es.
+`NANOLOOP_REQUIRE_CHECKS=1` treats any criterion without a check as unmet, so a
+run cannot look stronger than it is.
 
 ---
 
-## ~~G2~~. Ficheros grandes: el anchor es inalcanzable — ✅ CERRADO
+## ~~G2~~. Large files: the anchor was unreachable — ✅ CLOSED
 
 ```
-nanoloop/crew.py   29.735 chars -> slice de 12.018 (truncado por cabeza)
-¿el 25% final visible para anclar?  NO
+nanoloop/crew.py   29,735 chars -> slice of 12,018 (truncated from the head)
+last quarter of the file visible for anchoring?  NO
 ```
 
-`_read_slice` corta a 12.000 chars conservando la CABEZA. Todo anchor que viva en
-la cola del fichero es literalmente inalcanzable: el modelo no puede copiar texto
-que no ha visto, y el fallo aparece como `not_found` repetido — indistinguible de
-"el modelo no sabe copiar".
+`_read_slice` cut at 12,000 chars keeping the HEAD. Any anchor living in the tail
+was literally unreachable: the model cannot copy text it was never shown, and the
+failure surfaced as a repeated `not_found` — indistinguishable from "the model
+cannot copy".
 
-En un repo real esto no es un caso raro:
-
-```
-muestra de pydantic (105 ficheros)
-  42% exceden la mitad del presupuesto de build
-  _generate_schema.py  ~34.087 tok   (4x la ventana COMPLETA de 8.192)
-  json_schema.py       ~31.488 tok
-  types.py             ~26.490 tok
-```
-
-**Qué haría, por orden:**
-1. **Ventana centrada en la región relevante** en vez de la cabeza: localizar por
-   símbolo (ya tenemos el índice de `repomap._symbols`) y mandar esa función ±N
-   líneas. Es el cambio de mayor impacto y no toca la arquitectura.
-2. Numerar las líneas del slice para que el modelo ancle por posición.
-3. Subir `PHASE_NUM_CTX["build"]` solo si hace falta — cuesta latencia en local.
-
-**HECHO.** `_read_slice` ya no trunca por la cabeza. Localiza con `ast` la
-definición de la que trata el paso (pistas: `defines`, luego `title`/`intent`) y
-manda una ventana centrada en ella, creciendo hacia fuera hasta llenar el
-presupuesto. Si ningún símbolo casa, manda **cabeza Y cola** — añadir al final es
-lo más común y la cola es donde se ancla.
-
-Sobre el propio `crew.py` (36.041 chars, 937 líneas):
+On a real repo this is not a rare case:
 
 ```
-símbolo            línea   antes           ahora
-run_goal            868    INALCANZABLE    visible
-verify_plan         785    INALCANZABLE    visible
-run_check           751    INALCANZABLE    visible
+pydantic sample (105 files)
+  42% exceed half the build budget
+  _generate_schema.py  ~34,087 tok   (4x the ENTIRE 8,192 window)
+  json_schema.py       ~31,488 tok
+  types.py             ~26,490 tok
 ```
 
-Verificado de punta a punta contra un módulo de 22.229 chars donde `class
-Registry` cae fuera de los primeros 12.000: **1 paso, 1 llamada, 0 reparaciones,
-anchor `exact`**, criterio ejecutable en verde y gates verdes.
+**DONE.** `_read_slice` no longer truncates from the head. It locates the
+definition the step is about (hints: `defines`, then `title`/`intent`) with `ast`
+and sends a window centred on it, growing outward to fill the budget. If no
+symbol matches it sends **head AND tail** — appending is the most common step and
+the tail is where you anchor for it.
 
-Cada región mostrada es byte a byte idéntica al fichero (hay test que lo fija) y
-los huecos van anunciados — un anchor que cruzara el hueco no casaría con nada, y
-el modelo tiene que poder ver que falta algo.
+On `crew.py` itself (36,041 chars, 937 lines):
 
-Nota: no numeré las líneas. Chocaría con el copiado literal del anchor, que es la
-propiedad de la que depende todo lo demás.
+```
+symbol             line    before          after
+run_goal            868    UNREACHABLE     visible
+verify_plan         785    UNREACHABLE     visible
+run_check           751    UNREACHABLE     visible
+```
+
+Verified end to end against a 22,229-char module whose `class Registry` falls
+outside the first 12,000 chars: **1 step, 1 model call, 0 repairs, `exact`
+anchor**, executable criterion green and gates green.
+
+Every shown region is byte-for-byte identical to the file (there is a test
+pinning it) and the gaps are announced — an anchor spanning a gap would match
+nothing, and the model must be able to see something is missing.
+
+Note: I did not number the lines. It would fight the verbatim anchor copying that
+everything else depends on.
 
 ---
 
-## ~~G3~~. El planner es inestable entre corridas — ✅ CERRADO (y la premisa era falsa)
+## ~~G3~~. The planner was unstable across runs — ✅ CLOSED (and the premise was false)
 
-Mismo objetivo, mismo modelo, cuatro corridas: **1, 2, 4 y 5 pasos**. Y en una de
-ellas emitió dos pasos idénticos ("Add tests… tests/test_tags.py" duplicado).
-
-El replan compensa el caso "faltó algo", pero no el caso "el plan estaba mal
-descompuesto". Un plan de 5 pasos donde 2 son redundantes gasta llamadas y
-multiplica las ocasiones de fallar.
-
-**MEDIDO, y me equivocaba.** `eval/run_variance.py`, 8 corridas del mismo
-objetivo:
+**MEASURED, and I was wrong.** `eval/run_variance.py`, 8 runs of one goal:
 
 ```
 steps (raw)      median 3.0   range 3-3   sd 0.00   {3: 8}
-criterios con check                       16/16 (100%)
+criteria with a check                     16/16 (100%)
 VERDICT: stable
 ```
 
-El planner es **determinista** a temperatura 0. Lo que yo tomé por varianza eran
-entradas distintas: objetivos ligeramente diferentes y repos en estados
-distintos. La lección: sin medir, "es inestable" era una historia que me conté.
+The planner is **deterministic** at temperature 0. What I took for variance was
+different inputs: slightly different goals against repos in different states. The
+lesson: without measuring, "it is unstable" was a story I told myself.
 
-**Pero la medición destapó un bug real y consistente**, que es lo que de verdad
-causaba los replans:
+**But the measurement exposed a real and consistent bug**, which was what
+actually caused the replans:
 
 ```
-paso 3  target_file='todo wrong/store.py'    <- 8 de 8 corridas
+step 3  target_file='todo wrong/store.py'    <- 8 runs out of 8
 ```
 
-Un directorio que no existe. El paso no editaba `todo/store.py`: **creaba un
-fichero fantasma**, el símbolo caía donde ningún criterio miraba, y se gastaba
-una ronda de replan redescubriéndolo.
+A directory that does not exist. The step did not edit `todo/store.py`: it
+**created a phantom file**, the symbol landed where no criterion looked, and a
+replan round was spent rediscovering it.
 
-`resolve_target()` lo repara de forma determinista: si la ruta no existe y hay
-**exactamente un** fichero con ese nombre, se ajusta a él; si hay ambigüedad se
-deja fallar, porque un ajuste equivocado edita el fichero equivocado.
+`resolve_target()` repairs this deterministically: if the path does not exist and
+**exactly one** file bears that name, snap to it; anything ambiguous is left to
+fail loudly, because a wrong snap edits the wrong file.
 
-Efecto medido en vivo, mismo objetivo: **2 rondas de plan → 1**, 3/3 pasos, 3
-llamadas.
+Measured effect live, same goal: **2 plan rounds → 1**, 3/3 steps, 3 calls.
 
-También añadido `normalize_plan()`, que descarta pasos redundantes de forma
-conservadora — solo con `defines` repetido o título idéntico. Dos pasos sobre el
-mismo fichero sin `defines` NO se fusionan: un falso merge pierde trabajo en
-silencio.
+Also added `normalize_plan()`, which drops redundant steps conservatively — only
+on a repeated `defines` or an identical title. Two steps on one file with no
+`defines` are NOT merged: a false merge silently loses work.
 
 ---
 
-## ~~G4~~. Crear ficheros nuevos — ✅ MEDIDO (y era mucho menos grave)
+## ~~G4~~. Whole-file generation — ✅ MEASURED (and far less serious than it looked)
 
-Editar con anclajes: ~100%. Escribir un fichero entero: falla repetidamente,
-incluso con el 26B. Ya mejoró mucho (prompt y esquema propios, `ast.parse` antes
-de escribir, `autofix`), pero es donde se concentran las reparaciones.
-
-**MEDIDO.** `eval/run_newfiles.py`, 16 fixtures, embudo en vez de tasa:
+**MEASURED.** `eval/run_newfiles.py`, 16 fixtures, a funnel rather than a rate:
 
 ```
-             cruda    pipeline real
+              raw     real pipeline
 parsed      100.0%       100.0%
 syntax       93.8%        93.8%
 lint         41.7%        93.8%   <- autofix
@@ -184,142 +149,136 @@ defines      41.7%        93.8%
 FULLY VALID  41.7%        93.8%
 ```
 
-**Dos veces me equivoqué al medir, y las dos veces a la baja.**
+**I measured it wrong twice, and both times too harshly.**
 
-1. La primera medición dio **41,7%** — pero medía la salida *cruda*, sin el
-   `crew.autofix` que el pipeline aplica tras cada edit. Los fallos dominantes
-   eran `F401 unused import` e `I001 imports sin ordenar`: **auto-corregibles**.
-   Estaba culpando al modelo de algo que una herramienta arregla siempre.
-2. La segunda dio **68,8%**, y todos los fallos restantes eran ficheros de test
-   con el diagnóstico *"does not define test_X"*. Mirando lo que escribió:
+1. The first reading said **41.7%** — but it measured the *raw* output, without
+   the `crew.autofix` the pipeline applies after every edit. The dominant
+   failures were `F401 unused import` and `I001 unsorted imports`:
+   **auto-fixable**. I was blaming the model for what a tool fixes every time.
+2. The second said **68.8%**, and every remaining failure was a test module
+   reported as *"does not define test_X"*. Looking at what it actually wrote:
 
-   | pedido | escribió |
+   | asked for | wrote |
    |---|---|
    | `test_pending_empty` | `test_store_pending_is_empty_on_new_store` |
    | `test_all_returns_both` | `test_all_returns_two_items_after_adding_two` |
 
-   Tests **válidos, importables y mejor nombrados que los que pedí**. El que
-   fallaba era mi verificador: en un módulo de test el nombre exacto no es el
-   requisito, que exista un test lo es. `defines_symbol` ahora acepta cualquier
-   `test_*` en un módulo de test — y solo ahí; fuera, el nombre sigue siendo el
-   contrato (`by_tag` ≠ `by_label`).
+   Tests that are **valid, importable and better named than what I asked for**.
+   The thing that was wrong was my verifier: in a test module the exact name is
+   not the requirement, the presence of a test is. `defines_symbol` now accepts
+   any `test_*` in a test module — and only there; elsewhere the name is still
+   the contract (`by_tag` ≠ `by_label`).
 
-**Resultado real: 15/16 = 93,8%.** Un único fallo genuino en 16 (un error de
-indentación). Frente al ~100% de los edits con anclaje, la brecha existe pero es
-mucho menor de lo que aparentaba — y el `--raw` del harness deja ver cuánto de
-eso lo aporta la herramienta y no el modelo.
+**Real result: 15/16 = 93.8%.** One genuine failure in sixteen (an indentation
+error). Against ~100% for anchored edits the gap is real but far smaller than it
+appeared — and the harness's `--raw` flag shows how much of that the tool
+contributes rather than the model.
 
-Sigue valiendo: cubrir con **skills** todo lo que sea plantilla (el FastAPI salió
-3/3 con 0 llamadas). Pero "crear ficheros nuevos es el punto débil" era, en
-buena medida, un artefacto de cómo lo estaba midiendo.
-
----
-
-## G5. El repo map no escala — 🟡 lo notarás pronto
-
-```
-este repo: 129 líneas, ~3.260 tok  (presupuesto plan: 16.384)
-```
-
-Cómodo aquí, pero crece lineal y sin ningún filtro: `max_files=300` y corta. Un
-repo de 2.000 ficheros ni entra ni tendría sentido — el planner no necesita ver
-todo el repo, necesita ver **lo relevante al objetivo**.
-
-**Qué haría:** filtrar el map por relevancia al objetivo antes de mandarlo
-(coincidencia léxica basta para empezar; ya tenemos EmbeddingGemma si hace falta
-algo mejor). Nótese que el índice de símbolos que añadimos ya es lo que hace el
-map útil — sin él el planner mandaba edits a `__init__.py`.
+Still true: cover anything template-shaped with **skills** (the FastAPI scaffold
+came out 3/3 with 0 model calls). But "new files are the weak point" was
+substantially an artefact of how I was measuring.
 
 ---
 
-## G6. Nadie mira dos ficheros a la vez — 🟡 estructural
+## G5. The repo map does not scale — 🟡 you will notice soon
 
-Cada paso ve UN fichero (D6, y es deliberado). Consecuencia: un cambio en
-`store.py` que rompe `format.py` solo se detecta si los tests ya lo cubren. En un
-repo real, un cambio de firma se propaga y el crew no lo ve venir.
+```
+this repo: 129 lines, ~3,260 tok  (plan budget: 16,384)
+```
 
-Los gates son la red, y son buena red — pero solo tan buena como la suite de
-tests del repo destino. **En un repo con poca cobertura, el crew avanza a ciegas.**
+Comfortable here, but it grows linearly with no filter at all: `max_files=300`
+then truncates. A 2,000-file repo neither fits nor would make sense — the planner
+does not need to see the whole repo, it needs to see **what is relevant to the
+goal**.
 
-No lo "arreglaría" ampliando el contexto (eso es el anti-patrón de §6 de PLAN.md).
-Lo tratable es: exigir que el repo destino tenga tests que pasen ANTES de empezar,
-y abortar si no.
+**What I would do:** filter the map by relevance to the goal before sending it
+(lexical matching is enough to start; `recall.py` already has EmbeddingGemma if
+something better is needed). Note that the symbol index we added is what makes
+the map useful at all — without it the planner was sending edits to
+`__init__.py`.
 
 ---
 
-## ~~G7~~. Supuestos del entorno — ✅ CERRADO (parcialmente)
+## G6. Nobody looks at two files at once — 🟡 structural
 
-- Los gates asumen `ruff` + `pytest` configurados. En un repo sin ellos, el primer
-  gate falla y el loop gasta reparaciones en algo que ningún edit arregla — ya nos
-  pasó con `ruff: command not found`.
-- El crew **no puede instalar dependencias**. Si la tarea necesita una librería
-  nueva, no hay camino.
-- `DEFAULT_GATES` está cableado a Python. Otro lenguaje = otra configuración.
+Each step sees ONE file (D6, and deliberately so). Consequence: a change in
+`store.py` that breaks `format.py` is only detected if the tests already cover
+it. In a real repo a signature change propagates and the crew does not see it
+coming.
 
-**HECHO** lo principal. `crew.preflight()` corre antes del primer plan y se niega
-a empezar si el repo ya está roto, distinguiendo dos causas que necesitan
-respuestas distintas:
+The gates are the net, and a good one — but only as good as the target repo's
+test suite. **In a repo with thin coverage, the crew advances blind.**
 
-```
-tool ausente -> tooling not on PATH: eslint. Install it in the environment...
-repo rojo    -> the repo does not pass its own gates before any change
-```
-
-Y **no** bloquea dos casos que son legítimos: workspace vacío (scaffolding desde
-cero — la demo de FastAPI empieza justo ahí) y repos sin Python.
-
-Verificado con el CLI:
-
-```
-repo con un test roto     -> exit 3, 0 llamadas al modelo
-workspace vacío           -> skipped, sigue y scaffoldea (0 llamadas, skill)
-```
-
-Lo de las **0 llamadas** es el punto: antes ese repo habría gastado reparaciones
-peleando con un fallo que ningún edit suyo podía arreglar.
-
-`--skip-preflight` para saltarlo a sabiendas.
-
-**Sigue pendiente de G7:** el crew no puede instalar dependencias, y
-`DEFAULT_GATES` sigue cableado a Python.
+I would not "fix" this by widening the context (that is the anti-pattern in
+PLAN.md §6). What is tractable: require the target repo's tests to pass BEFORE
+starting, and abort if not — which preflight now does.
 
 ---
 
-## G8. Cosas menores pero que muerden
+## ~~G7~~. Environment assumptions — ✅ CLOSED (partially)
 
-- **Sin resume.** Una corrida interrumpida deja el workspace a medias. El snapshot
-  protege por candidato, no por sesión.
-- **Latencia local**: ~30 s/llamada en el 12B, y vimos p50 subir de 17,5 s a
-  29,8 s tras un día de carga. El soak térmico de 30 pasos sigue sin correrse.
-- **Coste cloud sin límite**: no hay tope de gasto ni de llamadas por objetivo.
-- **`num_ctx` sigue sin verificarse** de verdad contra el servidor (Phase 0 #1
-  quedó a medias: el comando existe, la comprobación en logs no se hizo).
+**DONE** for the main part. `crew.preflight()` runs before the first plan and
+refuses to start if the repo is already broken, distinguishing two causes that
+need different answers:
+
+```
+tool missing -> tooling not on PATH: eslint. Install it in the environment...
+repo red     -> the repo does not pass its own gates before any change
+```
+
+And it deliberately does **not** block two legitimate cases: an empty workspace
+(scaffolding from nothing — the FastAPI demo starts exactly there) and repos with
+no Python.
+
+Verified through the CLI:
+
+```
+repo with a failing test  -> exit 3, 0 model calls
+empty workspace           -> skipped, proceeds and scaffolds (0 calls, skill)
+```
+
+The **zero calls** is the point: before this, that repo would have spent repairs
+fighting a failure no edit of its own could fix.
+
+`--skip-preflight` to override knowingly.
+
+**Still open in G7:** the crew cannot install dependencies, and `DEFAULT_GATES`
+is hardwired to Python.
 
 ---
 
-## Lo que yo haría, en orden
+## G8. Smaller things that still bite
 
-| # | Hueco | Esfuerzo | Desbloquea |
+- **No resume.** An interrupted run leaves the workspace half-done. The snapshot
+  protects per candidate, not per session.
+- **Local latency**: ~30 s/call on the 12B, and p50 rose from 17.5 s to 29.8 s
+  after a day of sustained load. The 30-step thermal soak has still not been run.
+- **`num_ctx` still not truly verified** against the server (Phase 0 #1 was left
+  half-done: the command exists, the log check was never made).
+
+---
+
+## What I would do, in order
+
+| # | gap | effort | unblocks |
 |---|---|---|---|
-| 1 | **G1** criterios ejecutables (y escritos por ti) | bajo | que "verde" signifique algo |
-| 2 | **G2** slice centrado en el símbolo | medio | editar ficheros reales |
-| 3 | **G7** preflight de gates | bajo | no pelear con el entorno |
-| 4 | **G3** dedup de pasos + medir varianza | bajo | planes estables |
-| 5 | **G5** repo map filtrado por relevancia | medio | repos grandes |
+| ~~1~~ | ~~**G1** executable criteria~~ ✅ | low | making "green" mean something |
+| ~~2~~ | ~~**G2** symbol-centred slicing~~ ✅ | medium | editing real files |
+| ~~3~~ | ~~**G7** gate preflight~~ ✅ | low | not fighting the environment |
+| ~~4~~ | ~~**G3** step dedup + variance~~ ✅ | low | stable plans |
+| 5 | **G5** repo map filtered by relevance | medium | large repos |
 
-Con **1 + 2 + 7** yo ya le daría una tarea real acotada en un repo con tests
-decentes. Sin G1, "todo verde" no te dice nada, y sin G2 no puede tocar la mitad
-de los ficheros de un repo normal.
+With 1 + 2 + 7 done I would hand it a scoped real task in a repo with decent
+tests. What remains untested is scale, not capability.
 
-## Qué tarea le daría HOY, tal cual está
+## What I would give it TODAY
 
-Funciona bien, sin supervisión, si se cumple todo esto:
+It works unattended if all of this holds:
 
-- repo Python con `ruff` + `pytest` ya configurados y **verdes de partida**
-- ficheros objetivo por debajo de ~10.000 chars
-- extender código existente (añadir método, parámetro, endpoint), no diseñar
-  módulos nuevos
-- objetivo que nombre explícitamente lo que debe existir (alimenta la aceptación)
-- **tú revisas el diff** — la aceptación te dice que está, no que esté bien
-
-Fuera de eso todavía necesita a alguien mirando.
+- a Python repo with `ruff` + `pytest` configured and **green to start**
+- target files under ~10,000 chars — or larger, now that slicing centres on the
+  symbol
+- extending existing code (add a method, a parameter, an endpoint) rather than
+  designing new modules
+- a goal that explicitly names what must exist (it feeds the acceptance criteria)
+- **you review the diff** — the criteria tell you it is there, not that it is good
