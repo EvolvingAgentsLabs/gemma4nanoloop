@@ -119,6 +119,42 @@ it and burned 4 calls on something no edit could fix. `run_gate` now prepends
 repair loop cannot distinguish "the edit was wrong" from "the harness is
 broken", so harness errors are expensive.
 
+### F6. Phase 6 — semantic recall wins decisively, but **PLAN.md's metric is saturated**
+
+`ollama pull embeddinggemma` → 621 MB (PLAN.md estimated ~300 MB), 768 dims,
+unit-normalized, ~0.5 s/embedding. Corpus: 8 notes, 8 chunks, 10 labeled queries.
+
+```
+                    @1            @2            @3            @5
+                 kw    sem     kw    sem     kw    sem     kw    sem
+MEAN           0.00   0.85   0.30   1.00   0.55   1.00   1.00   1.00
+```
+
+**recall@5 — the figure PLAN.md names — is 1.000 for BOTH methods.** That is not
+a tie between equals; k=5 over 8 notes retrieves 62% of the corpus, so the metric
+cannot discriminate. Reported alone it reads as "semantic failed to beat
+keyword", which is the opposite of what the data says. At discriminating k the
+gap is enormous: **keyword never once ranks the right note first (0.000 @1)**
+while semantic gets 0.850.
+
+`eval/run_recall.py` now sweeps k=1,2,3,5, flags saturated values explicitly, and
+takes its verdict from the smallest k that still separates the two. A single
+saturated number was exactly the "it works" failure PLAN.md §5 warns about.
+
+Two sub-1.0 cells at @1, both understood:
+- *"what goes into the prompt each turn"* — the correct note `context-is-compiled`
+  ranks **2nd, losing by 0.016** to `skills-are-data`, whose body literally says
+  a catalog entry "lives in the prompt". A genuine near-miss, resolved at k=2.
+- *"the laptop gets slow after a long run"* — 2 notes labeled relevant, so
+  recall@1 caps at 0.5 by construction. A labeling artifact, not a retrieval
+  failure; 1.00 at k=2.
+
+**Caveat: 10 queries against 8 notes, where PLAN.md asks for 30.** The direction
+is unambiguous but the corpus is far too small to call this settled. Both
+retrievers read the same corpus via `recall._corpus()`, which excludes the
+generated `MEMORY.md` index — that file lists every note's description and would
+have matched every query, silently beating the real notes.
+
 ---
 
 ## 0. Delta between PLAN.md and reality

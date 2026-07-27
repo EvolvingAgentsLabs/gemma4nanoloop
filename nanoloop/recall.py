@@ -112,9 +112,26 @@ class Chunk:
     vector: list[float]
 
 
+def _corpus() -> list[dict]:
+    """The notes to index, as plain dicts.
+
+    `memory.all_notes()` returns Note dataclasses and — importantly — skips
+    MEMORY.md, the generated table of contents. That file lists every note's
+    description, so indexing it would produce one chunk that matches every query
+    and quietly beats the real notes. The keyword baseline goes through the same
+    function, so both retrievers see exactly the same corpus.
+    """
+    if hasattr(memory, "all_notes"):
+        return [
+            {"name": n.name, "description": n.description, "body": n.body}
+            for n in memory.all_notes()
+        ]
+    return _scan_notes()
+
+
 def build_index(path: Path | None = None) -> list[Chunk]:
     """Embed every note chunk and persist. Documents get the DOCUMENT prefix."""
-    notes = memory.all_notes() if hasattr(memory, "all_notes") else _scan_notes()
+    notes = _corpus()
     chunks: list[Chunk] = []
     payload, meta = [], []
     for n in notes:
@@ -152,9 +169,11 @@ def _scan_notes() -> list[dict]:
     from . import frontmatter
 
     mem_dir = Path(os.environ.get("NANOLOOP_MEMORY_DIR", "Memory"))
+    index_name = getattr(memory, "INDEX_NAME", "MEMORY.md")
     out = []
     for p in sorted(mem_dir.glob("*.md")):
-        if p.name.startswith("."):
+        # Skip the generated table of contents for the reason in _corpus().
+        if p.name.startswith(".") or p.name == index_name:
             continue
         meta, body = frontmatter.parse(p.read_text(encoding="utf-8"))
         out.append(

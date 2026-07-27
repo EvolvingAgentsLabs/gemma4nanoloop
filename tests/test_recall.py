@@ -62,3 +62,24 @@ def test_empty_text_produces_no_chunks():
 
 def test_link_regex_finds_graph_edges():
     assert recall.LINK_RE.findall("see [[other-note]] and [[third]]") == ["other-note", "third"]
+
+
+# --- corpus selection --------------------------------------------------------
+
+
+def test_corpus_excludes_the_generated_index(tmp_path, monkeypatch):
+    """MEMORY.md lists every note's description. Indexed, it would match every
+    query and beat the real notes — and it would do so silently."""
+    import nanoloop.memory as mem
+
+    monkeypatch.setattr(mem, "MEMORY_DIR", tmp_path)
+    (tmp_path / "MEMORY.md").write_text("- [A](a.md) — hook\n- [B](b.md) — hook\n")
+    (tmp_path / "a.md").write_text("---\nname: a\ndescription: d\n---\nbody a\n")
+    names = {n["name"] for n in recall._corpus()}
+    assert "MEMORY" not in names and "a" in names
+
+
+def test_corpus_returns_plain_dicts():
+    """memory.all_notes() yields dataclasses; build_index subscripts dicts."""
+    for n in recall._corpus():
+        assert set(n) == {"name", "description", "body"}

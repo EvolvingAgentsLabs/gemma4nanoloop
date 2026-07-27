@@ -107,6 +107,7 @@ Measured against the live model (see `IMPLEMENTATION.md` §0a):
 | structured-output parse rate | 100% |
 | latency per call | p50 **17.5 s**, p90 28.4 s |
 | full loop, end to end | **1/1 steps, 1 model call, 0 repairs** |
+| semantic recall@1 vs keyword | **0.850 vs 0.000** (recall@5 saturates at 1.0/1.0) |
 | reasoning tokens per call | **0** (see below) |
 
 **The single biggest runtime finding:** Gemma 4 is a *reasoning* model, and
@@ -116,8 +117,9 @@ while the model spends thousands of tokens thinking. The client uses the native
 transport with `think:false`; `calllog` records `thinking_chars` so any
 regression is attributable at a glance.
 
-Still outstanding: the ≥50-fixture anchor measurement, the Phase 4 thermal soak
-at 30+ steps, and LiteRT-LM (not yet serving). See `IMPLEMENTATION.md` §12.
+Still outstanding: the ≥50-fixture anchor measurement, 30 recall queries against
+a larger note corpus, the Phase 4 thermal soak at 30+ steps, and LiteRT-LM (not
+yet serving). See `IMPLEMENTATION.md` §12.
 
 ## License
 
