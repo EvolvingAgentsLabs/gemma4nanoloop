@@ -37,6 +37,17 @@ Everything else follows from the same instinct — take load off the model:
 - **Skills** are catalog entries (~23 tok) with deterministic executors (D5).
 - **Context** is compiled fresh each turn — never the transcript (D6).
 
+Three things were added after running it for real, each closing a way the loop
+could report success while the work was not done:
+
+- **Acceptance criteria are executable.** A criterion is Python that exercises
+  the symbol and asserts the result, not a name that must exist — a `by_tag()`
+  returning `[]` satisfied the old check. Write your own with `--accept`.
+- **Unmet criteria trigger a bounded replan**, with a freshly built repo map so
+  the second pass sees what already exists instead of redoing it.
+- **Preflight refuses a repo that is already red**, because the repair loop
+  cannot tell a bad edit from a broken repo and will burn its attempts trying.
+
 ## Setup
 
 ```bash
@@ -59,7 +70,23 @@ python -m nanoloop.main plan "add a remove() method" --workspace eval/fixture-re
 # Full loop
 python -m nanoloop.main run "add a remove() method and a test" \
     --workspace eval/fixture-repo --interactive
+
+# With acceptance criteria you wrote (recommended for anything real)
+python -m nanoloop.main run "add a by_tag(tag) method to Store" \
+    --workspace eval/fixture-repo --accept criteria.json
 ```
+
+`criteria.json` — each `check` runs from the repo root and must exit 0:
+
+```json
+[{"symbol": "by_tag",
+  "file": "todo/store.py",
+  "check": "from todo.store import Store\ns = Store()\ns.add('a', ['x'])\nassert [i.title for i in s.by_tag('x')] == ['a']\n"}]
+```
+
+Useful flags: `--max-replans N`, `--skip-preflight`, `--n-candidates N`,
+`--snapshot copy|git`. Env: `NANOLOOP_BACKEND=ollama|litert|aistudio`,
+`NANOLOOP_REQUIRE_CHECKS=1` (a criterion with no check counts as unmet).
 
 ## Eval harness
 
@@ -80,15 +107,16 @@ That log is the regression suite when the runtime changes.
 
 ```
 nanoloop/
-  crew.py           state machine: Step/Plan/Edit, gates, apply_edit, build_step, Ctx
+  crew.py           state machine: run_goal/run_plan/build_step, gates, preflight,
+                    apply_edit, acceptance verification, symbol-centred slicing
   anchors.py        exact + fuzzy anchor location — the Phase 2 viability mechanism
-  planner.py        propose_plan(goal, repo_map) -> Plan
-  proposer.py       propose(step, ctx, feedback, temp) -> Edit
-  model_ollama.py   OpenAI-compatible client for Ollama / LiteRT-LM
+  planner.py        propose_plan(goal, repo_map, gaps) -> Plan  (+ replan prompt)
+  proposer.py       propose() for edits, propose_new_file() for new modules
+  model_ollama.py   client for Ollama (native), LiteRT-LM and AI Studio
   calllog.py        append-only JSONL call log
   snapshot.py       clean tree per candidate (D8)
   recall.py         EmbeddingGemma semantic recall over ./Memory
-  repomap.py        file tree + first docstring, never contents
+  repomap.py        file tree + docstring + defined symbols per file
   session.py memory.py skills.py frontmatter.py tools.py    (from nanoLoop)
 Skills/             scaffold-fastapi, add-endpoint, setup-pytest
 eval/               fixtures, measurement harnesses, fixture-repo
@@ -96,32 +124,49 @@ eval/               fixtures, measurement harnesses, fixture-repo
 
 ## Status
 
-First commit complete: **103 tests green** (23 upstream + 80 new), `ruff check`
-and `ruff format --check` clean.
-
-Measured against the live model (see `IMPLEMENTATION.md` §0a):
+**205 tests green**, `ruff check` and `ruff format --check` clean. Everything
+below was measured against a live model, not reasoned about.
 
 | | |
 |---|---|
-| **anchor-hit rate (Phase 2 viability gate)** | **100% exact, 12/12** |
+| anchor-hit rate | **100% exact (12/12)**, identical on 12B local and 26B cloud |
 | model calls per completed step | median **1.0** — greedy succeeds |
 | structured-output parse rate | 100% |
-| latency per call | p50 **17.5 s**, p90 28.4 s |
-| full loop, single step | **1/1 steps, 1 model call, 0 repairs** |
-| full loop, multi-step | **3/3 steps, 4 model calls, 1 repair** (109 s) |
-| semantic recall@1 vs keyword | **0.850 vs 0.000** (recall@5 saturates at 1.0/1.0) |
-| reasoning tokens per call | **0** (see below) |
+| full loop, multi-step | 3/3 steps, 4 calls, 1 repair |
+| scaffold a FastAPI service from nothing | 3/3 steps, **0 model calls** (all skills) |
+| edit a 22 KB file (symbol past the old window) | 1 step, 1 call, 0 repairs |
+| replan after an unmet criterion | 2 rounds, criterion satisfied |
+| semantic recall@1 vs keyword | **0.850 vs 0.000** (recall@5 saturates 1.0/1.0) |
+| latency per call | ~30 s local (12B) / ~4 s cloud (26B) |
+| reasoning tokens per call | **0** — see below |
 
-**The single biggest runtime finding:** Gemma 4 is a *reasoning* model, and
-Ollama's `/v1` endpoint cannot turn that off. Same prompt, `/v1` = 222 s vs
-native `/api/chat` = 27 s — an **8× penalty**, with `content` arriving empty
-while the model spends thousands of tokens thinking. The client uses the native
-transport with `think:false`; `calllog` records `thinking_chars` so any
-regression is attributable at a glance.
+**The biggest runtime finding:** Gemma 4 is a *reasoning* model and Ollama's
+`/v1` cannot turn it off. Same prompt: `/v1` 222 s vs native `/api/chat` 27 s —
+an **8× penalty**, with `content` arriving empty while the model spends
+thousands of tokens thinking. The client uses the native transport with
+`think:false`, and `calllog` records `thinking_chars` so a regression is
+attributable at a glance.
 
-Still outstanding: the ≥50-fixture anchor measurement, 30 recall queries against
-a larger note corpus, the Phase 4 thermal soak at 30+ steps, and LiteRT-LM (not
-yet serving). See `IMPLEMENTATION.md` §12.
+**The most instructive bug:** `Step.defines` and `Plan.acceptance` were both
+inert for a while. Pydantic omits any field with a `default=` from the JSON
+Schema's `required` list, so constrained decoding treated them as optional and
+the model never emitted them — two verification mechanisms that appeared to run
+and could never fail. `schema_of()` now requires every field.
+
+### What it can do today
+
+Small, verifiable changes to a Python repo with tests: add a method, a
+parameter, an endpoint. Scaffolding via skills. It runs unattended — gates and
+snapshots mean nothing broken reaches disk.
+
+### What it still cannot do
+
+See `GAPS.md` for the measured list. The ones that bite first: whole-file
+generation is fragile even on the 26B (anchored edits are ~100%, new files are
+not); the planner emits 1–5 steps for the same goal across runs; each step sees
+one file, so a cross-file break is only caught if tests already cover it; and
+the crew cannot install dependencies. The Phase 4 thermal soak on the fanless
+Air has still not been run.
 
 ## License
 
