@@ -43,6 +43,36 @@ def _first_docstring(path: Path) -> str:
     return doc[:120]
 
 
+def _symbols(path: Path, limit: int = 12) -> list[str]:
+    """Top-level class and function names defined in a .py file.
+
+    WHY THIS EXISTS. PLAN.md §4 Phase 1 specifies the map as "file tree + first
+    docstring per file. Not file contents." That is too thin to ROUTE A SYMBOL
+    TO A FILE. Observed on the first multi-step run: asked to add a field to
+    `Item`, the planner targeted `todo/__init__.py` — a file containing one
+    docstring and nothing else — because nothing in the map said `Item` lives in
+    `todo/store.py`. Every downstream anchor then missed, unfixably, because the
+    text being anchored to was not in that file.
+
+    Names only, never bodies, so the map stays a map: ~5-15 tokens per file
+    against the 16K plan budget.
+    """
+    if path.suffix != ".py":
+        return []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError):
+        return []
+    names = [
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+    ]
+    if len(names) > limit:
+        return [*names[:limit], "..."]
+    return names
+
+
 def build(root: Path | str, *, max_files: int = 300) -> str:
     """Render the map. Sorted for stability — a map that reorders between calls
     defeats prefix caching and makes two runs incomparable."""
@@ -58,5 +88,9 @@ def build(root: Path | str, *, max_files: int = 300) -> str:
             continue
         rel = p.relative_to(root)
         doc = _first_docstring(p)
-        rows.append(f"{rel}" + (f"  — {doc}" if doc else ""))
+        syms = _symbols(p)
+        row = f"{rel}" + (f"  — {doc}" if doc else "")
+        if syms:
+            row += f"\n    defines: {', '.join(syms)}"
+        rows.append(row)
     return "\n".join(rows) if rows else "[empty repo]"

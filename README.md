@@ -106,7 +106,8 @@ Measured against the live model (see `IMPLEMENTATION.md` §0a):
 | model calls per completed step | median **1.0** — greedy succeeds |
 | structured-output parse rate | 100% |
 | latency per call | p50 **17.5 s**, p90 28.4 s |
-| full loop, end to end | **1/1 steps, 1 model call, 0 repairs** |
+| full loop, single step | **1/1 steps, 1 model call, 0 repairs** |
+| full loop, multi-step | **3/3 steps, 4 model calls, 1 repair** (109 s) |
 | semantic recall@1 vs keyword | **0.850 vs 0.000** (recall@5 saturates at 1.0/1.0) |
 | reasoning tokens per call | **0** (see below) |
 

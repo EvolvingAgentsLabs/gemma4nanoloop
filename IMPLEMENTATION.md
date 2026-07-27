@@ -155,6 +155,47 @@ retrievers read the same corpus via `recall._corpus()`, which excludes the
 generated `MEMORY.md` index — that file lists every note's description and would
 have matched every query, silently beating the real notes.
 
+### F7. Multi-step works — after fixing a repo map too thin to route symbols
+
+First genuine multi-step run (3 steps across 2 files) **FAILED**: the planner
+sent "add a priority field to `Item`" to `todo/__init__.py`, a file containing
+one docstring and nothing else. `Item` is in `todo/store.py`. Every anchor then
+missed unfixably — the text simply was not in that file.
+
+The cause is the repo map, not the model. PLAN.md §4 Phase 1 specifies "file
+tree + first docstring per file. Not file contents", and nothing in that map
+says where `Item` is defined. The planner guessed a plausible-sounding wrong
+file, which is the only thing it could do.
+
+**This also exposes a flaw in PLAN.md's Phase 1 acceptance criterion.** It asks
+that "≥8/10 have `target_file` paths that actually exist" — and this plan would
+have PASSED, because `todo/__init__.py` does exist. Existence is not
+correctness. The criterion should be that the target file contains the symbol
+the step names.
+
+Fix (`repomap._symbols`): one `defines:` line per Python file listing top-level
+class and function NAMES. Not bodies — the map stays a map, ~5-15 tokens per
+file against a 16K budget.
+
+```
+todo/store.py   — In-memory todo store.
+    defines: Item, Store
+```
+
+Same goal, re-run:
+
+```
+  1. Add priority field to Item class      (todo/store.py)   ok — 1 call,  0 repairs, ['exact']
+  2. Add done() method to Store class      (todo/store.py)   ok — 1 call,  0 repairs, ['exact']
+  3. Add render_summary function           (todo/format.py)  ok — 2 calls, 1 repair,  ['not_found','exact']
+  done  3/3 steps, 4 model calls
+```
+
+Step 3 is the repair loop earning its place: a missed anchor became an exact one
+on the retry with no human involvement. Output verified by executing it —
+`done()` filters correctly, `priority` defaults to 0, `render_summary` returns
+"1 done / 2 total" — and all three gates pass independently.
+
 ---
 
 ## 0. Delta between PLAN.md and reality
