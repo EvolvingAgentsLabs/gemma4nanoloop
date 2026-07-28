@@ -19,6 +19,61 @@ def align(query: str, subject: str):
     return aligner.align(query, subject)[0]
 
 
+def identity_over(query: str, subject: str, s_start: int, s_end: int) -> dict:
+    """Identity restricted to a range of SUBJECT positions (1-based, inclusive).
+
+    WHY THIS EXISTS, and it is the most important correction in this example.
+
+    `conserved_blocks` returns the ungapped segments of ONE local alignment.
+    BLAST reports HSPs: separate local alignments, each with its own E-value.
+    Those are not the same thing, and treating them as if they were understates
+    the biology badly here.
+
+    The homeodomain sits at PAX6 208-267 and is 90% identical to the fly's. But
+    the ungapped block containing it runs 182-327, so it also carries flanks at
+    46% and 35% — and the block as a whole reports 60%. Label that block
+    "homeodomain" and you have just described one of the most conserved
+    DNA-binding motifs known as barely more conserved than average. The book's
+    own numbers (80 aa at 85%) agree with 90%, not with 60%.
+
+    So: the alignment still finds the blocks on its own, unaided. This function
+    only answers a narrower question afterwards — how conserved is the annotated
+    domain itself — and the two are reported separately in discover.py so the
+    discovery never leans on the annotation.
+    """
+    alignment = align(query, subject)
+    aligned = identities = 0
+    for (qs, qe), (ss, se) in zip(*alignment.aligned):
+        for i in range(qe - qs):
+            if s_start <= ss + i + 1 <= s_end:
+                aligned += 1
+                identities += query[qs + i] == subject[ss + i]
+    return {
+        "aligned": aligned,
+        "identities": identities,
+        "percent_identity": round(100 * identities / aligned, 1) if aligned else 0.0,
+    }
+
+
+def alignment_totals(query: str, subject: str) -> dict:
+    """Every aligned residue, not only the ones inside long blocks.
+
+    `conserved_blocks` filters to >= min_length, so summing over its output and
+    calling the result "the aligned residues" counts a filtered subset: 311 of
+    the 389 residues this alignment actually pairs up.
+    """
+    alignment = align(query, subject)
+    aligned = identities = 0
+    for (qs, qe), (ss, se) in zip(*alignment.aligned):
+        aligned += qe - qs
+        identities += sum(1 for a, b in zip(query[qs:qe], subject[ss:se]) if a == b)
+    return {
+        "aligned": aligned,
+        "identities": identities,
+        "percent_identity": round(100 * identities / aligned, 1) if aligned else 0.0,
+    }
+
+
 def conserved_blocks(query: str, subject: str, min_length: int = 20):
     """Aligned blocks of at least `min_length` residues.
 

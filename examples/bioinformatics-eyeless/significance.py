@@ -38,7 +38,7 @@ from __future__ import annotations
 import random
 import statistics
 
-from conserved import align
+from conserved import align, conserved_blocks
 
 # Fixed so the example gives the same numbers on every machine and in five
 # years. The finding is 113 standard deviations wide; it does not depend on the
@@ -94,6 +94,43 @@ def significance(
         "p_value_upper_bound": max(at_least_as_good, 1) / trials,
         "beat_every_shuffle": at_least_as_good == 0,
     }
+
+
+def block_identity_null(
+    query: str,
+    subject: str,
+    min_length: int = 20,
+    trials: int = 40,
+    seed: int = DEFAULT_SEED,
+) -> list[float]:
+    """Identities of the blocks a shuffled subject still produces.
+
+    A local alignment against ANY sequence of this composition yields long
+    ungapped blocks — that is what the algorithm does, it keeps extending while
+    the score stays positive. Those blocks have an identity, and knowing its
+    distribution is what separates "conserved" from "the aligner had to put
+    something here".
+
+    Measured on this pair: 40 shuffles give 74 blocks of >= 20 residues,
+    averaging 25.6% identity and reaching 45%. So a real 32-residue block at
+    18.8% is not a weakly conserved linker. It is below the noise floor.
+    """
+    rng = random.Random(seed)
+    letters = list(subject)
+    out: list[float] = []
+    for _ in range(trials):
+        rng.shuffle(letters)
+        out.extend(
+            b["percent_identity"] for b in conserved_blocks(query, "".join(letters), min_length)
+        )
+    return out
+
+
+def above_noise(percent_identity: float, null: list[float], alpha: float = 0.05) -> bool:
+    """Would chance alone produce a block this good more than `alpha` of the time?"""
+    if not null:
+        return True
+    return sum(1 for x in null if x >= percent_identity) <= alpha * len(null)
 
 
 def verdict(result: dict) -> str:

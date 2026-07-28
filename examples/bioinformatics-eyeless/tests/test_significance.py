@@ -69,3 +69,39 @@ def test_the_p_value_is_reported_as_a_bound_not_a_point():
 
 def test_verdict_reads_as_a_sentence():
     assert "standard deviations" in verdict(significance(EYELESS_DROME, PAX6_HUMAN, trials=10))
+
+
+# --- a block has to beat the blocks chance produces --------------------------
+
+
+def test_the_linker_block_is_below_the_noise_floor():
+    """Reported as "linker, far freer to mutate" at 19% identity. Shuffled PAX6
+    produces blocks averaging ~26%, so that block is worse than average noise:
+    nothing survived there at all."""
+    from conserved import conserved_blocks
+    from significance import above_noise, block_identity_null
+
+    null = block_identity_null(EYELESS_DROME, PAX6_HUMAN, trials=20)
+    blocks = conserved_blocks(EYELESS_DROME, PAX6_HUMAN)
+    weakest = min(blocks, key=lambda b: b["percent_identity"])
+
+    assert weakest["percent_identity"] < sum(null) / len(null)
+    assert not above_noise(weakest["percent_identity"], null)
+
+
+def test_the_real_domains_do_beat_the_noise_floor():
+    from conserved import conserved_blocks
+    from significance import above_noise, block_identity_null
+
+    null = block_identity_null(EYELESS_DROME, PAX6_HUMAN, trials=20)
+    for b in conserved_blocks(EYELESS_DROME, PAX6_HUMAN):
+        if b["length"] > 100:
+            assert above_noise(b["percent_identity"], null), b
+
+
+def test_chance_really_does_produce_long_blocks():
+    """The premise of the whole check: a local aligner extends while the score
+    stays positive, so blocks are not evidence on their own."""
+    from significance import block_identity_null
+
+    assert len(block_identity_null(EYELESS_DROME, PAX6_HUMAN, trials=20)) > 10
