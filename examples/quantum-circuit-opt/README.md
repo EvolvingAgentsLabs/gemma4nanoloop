@@ -9,14 +9,32 @@ This example exists for **the criterion**, not for the task.
 `criteria.json` holds the best acceptance criterion in the project:
 
 ```python
-assert Operator(prepare_state()).equiv(Operator(ref))  # still the same unitary
-assert qc.count_ops().get("cx", 0) <= 1  # and uses fewer gates
+assert Operator(prepare_state()).equiv(Operator(ref))  # same unitary
+assert sum(1 for i in qc.data if len(i.qubits) == 2) <= 1  # and cheaper
+assert qc.size() <= 3
 ```
 
 It is **dual** and **exact**: correctness (unitary equivalence, mathematically
-decidable) plus improvement (gate count). Neither half admits an opinion, and no
-stub can satisfy it. That is precisely the shape `AUTONOMY.md` argues autonomy
-needs.
+decidable) plus improvement (cost). Neither half admits an opinion, and no stub
+can satisfy it. That is precisely the shape `AUTONOMY.md` argues autonomy needs.
+
+### Its improvement half used to be a name check, and that was a hole
+
+The check was `count_ops()["cx"] <= 1` and `count_ops()["x"] == 0` — two gate
+**names**. A circuit could stay equivalent, get bigger, and pass anyway by
+renaming its way out:
+
+| circuit | gates | old criterion |
+|---|---|---|
+| the intended answer | 3 | passes |
+| `cz` + hadamards instead of `cx` | 5 | **passed** |
+| the answer plus ten cancelling `y` pairs | 23 | **passed** |
+
+That is G1 from `GAPS.md` inverted: not a stub that does too little, but bloat
+that does too much, waved through by a check measuring the wrong thing. Counting
+by **arity** and by **total size** closes both, and `tests/test_criterion.py`
+now runs the shipped criterion against each of those circuits — an oracle nobody
+tests is a claim, not an oracle.
 
 ## Reliability, per model
 

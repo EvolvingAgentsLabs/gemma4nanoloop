@@ -2,6 +2,6 @@
   {
     "symbol": "prepare_state",
     "file": "circuits.py",
-    "check": "from circuits import prepare_state\nfrom qiskit import QuantumCircuit\nfrom qiskit.quantum_info import Operator\n\nref = QuantumCircuit(2)\nref.h(0)\nref.cx(0, 1)\nref.rz(0.5, 0)\n\nqc = prepare_state()\nassert Operator(qc).equiv(Operator(ref)), 'the circuit no longer computes the same unitary'\n\nops = qc.count_ops()\nassert ops.get('cx', 0) <= 1, f\"expected at most 1 CNOT, got {ops.get('cx', 0)}\"\nassert ops.get('x', 0) == 0, f\"the cancelling X pair should be gone, got {ops.get('x', 0)}\"\n"
+    "check": "from circuits import prepare_state\nfrom qiskit import QuantumCircuit\nfrom qiskit.quantum_info import Operator\n\nref = QuantumCircuit(2)\nref.h(0)\nref.cx(0, 1)\nref.rz(0.5, 0)\n\nqc = prepare_state()\n\n# 1. Correctness: mathematically decidable, admits no opinion.\nassert Operator(qc).equiv(Operator(ref)), 'the circuit no longer computes the same unitary'\n\n# 2. Improvement, counted by ARITY and TOTAL COST -- never by gate name.\n#    Naming two specific gates (cx <= 1, x == 0) let a circuit pass by renaming\n#    its way out: cz plus hadamards has zero 'cx', and ten cancelling 'y' pairs\n#    have zero 'x'. Both stay equivalent, both used to pass, both are worse.\ntwo_qubit = sum(1 for inst in qc.data if len(inst.qubits) == 2)\nassert two_qubit <= 1, f'expected at most 1 two-qubit gate, got {two_qubit}'\n\ntotal = qc.size()\nassert total <= 3, f'expected at most 3 gates, got {total}: {dict(qc.count_ops())}'\n"
   }
 ]
