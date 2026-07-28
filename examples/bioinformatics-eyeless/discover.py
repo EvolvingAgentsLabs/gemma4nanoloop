@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from conserved import align, conserved_blocks
 from sequences import EYELESS_DROME, PAX6_HUMAN
+from significance import DEFAULT_TRIALS, shuffled_scores, significance, verdict
 
 # NCBI places these domains in human PAX6. They are used only to LABEL what the
 # alignment finds on its own — never to find it.
@@ -32,6 +33,27 @@ def label(subject_start: int, subject_end: int) -> str:
 
 def rule(char: str = "─") -> None:
     print(char * 72)
+
+
+def histogram(values: list[float], real: float, width: int = 46, bins: int = 12) -> None:
+    """Draw the null distribution and where the real score falls.
+
+    The point of showing it rather than only reporting a z-score: you can see
+    that the two are not on the same scale at all, which is more convincing than
+    any number and impossible to misread.
+    """
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1.0
+    counts = [0] * bins
+    for v in values:
+        counts[min(int((v - lo) / span * bins), bins - 1)] += 1
+    tallest = max(counts) or 1
+    for i, count in enumerate(counts):
+        edge = lo + span * i / bins
+        bar = "█" * round(width * count / tallest)
+        print(f"    {edge:>6.0f} │{bar} {count or ''}".rstrip())
+    print(f"    {'':>6} │")
+    print(f"    {real:>6.0f} │{'▓' * width}  <- the real alignment, off the chart")
 
 
 def main() -> None:
@@ -96,9 +118,32 @@ literature index, no gene catalogue would ever put them together:
 
     rule()
     print("""
+BUT COULD THIS BE CHANCE?
+
+That is the question, and it has an answer you can compute rather than assert.
+Take PAX6 and SHUFFLE it: same amino acids, same frequencies, order destroyed.
+Any two sequences of this length and composition will align to *something*. A
+hundred shuffles show you what that something looks like when there is no shared
+ancestry — the null hypothesis, built in front of you.
+""")
+    sig = significance(EYELESS_DROME, PAX6_HUMAN)
+    null = shuffled_scores(EYELESS_DROME, PAX6_HUMAN, DEFAULT_TRIALS)
+    print(f"    {DEFAULT_TRIALS} shuffled PAX6 sequences, aligned against the real eyeless:\n")
+    histogram(null, sig["score"])
+    print()
+    for line in verdict(sig).splitlines():
+        print(f"    {line}")
+    print()
+    print(
+        "    (This is what BLAST's E-value estimates analytically. Here it is done\n"
+        "     by brute force, which is slower and much easier to believe.)\n"
+    )
+
+    rule()
+    print("""
 WHAT IT MEANS
 
-93% identity across 133 consecutive residues does not happen by chance. Between
+So it is not chance — that is now measured, not assumed. Between
 a fly and a human, separated by some 600 million years, what survives intact is
 exactly the piece that grips DNA — because changing it breaks the protein. What
 lies between has drifted freely: nothing was watching it.
