@@ -17,18 +17,25 @@ The evaluator is the same idea as `Acceptance.check`, split in two:
 
 ```python
 valid = Operator(candidate).equiv(Operator(reference))  # a hard gate
-score = sum(qc.count_ops().values())  # a gradient
+score = cost(qc)  # a gradient: 1 per gate, 10 per two-qubit gate
 ```
 
 An invalid candidate scores zero however short it is. Otherwise the loop learns
-that deleting the circuit is an excellent optimisation.
+that deleting the circuit is an excellent optimisation — and the empty circuit
+really is this function's global optimum, which `tests/` now pins as the
+counter-example rather than leaving to trust.
+
+**Cost counts by arity, not by gate name.** Plain gate count cannot say what the
+example claims matters: a two-qubit gate is roughly an order of magnitude worse
+on real hardware, and three gates with one CX are not three gates with two. It
+also closes a hole — nothing escapes the count by calling itself `cz`.
 
 ## Result
 
 ```
-original      10 gates, depth 8
-transpiler     3 gates, depth 3   <- the bar
-evolved        3 gates   in 3 model calls and 9 s   -> MATCHES the transpiler
+original     10 gates, cost 37, depth 8
+transpiler    3 gates, cost 12, depth 3   <- the bar
+evolved       3 gates, cost 12   in 3 model calls and 9 s   -> MATCHES the transpiler
 ```
 
 It found the reduction that requires **commutation**, not merely adjacent
@@ -68,7 +75,7 @@ Run end to end with `run --optimize` against both backends:
 | model | result | optimum |
 |---|---|---|
 | `gemma-4-26b` (cloud) | **10 → 3** gates, matching the transpiler | 3 |
-| `gemma4:12b` (local) | **9 → 7**, then plateaus | 3 |
+| `gemma4:12b` (local) | **10 → 7** gates, then plateaus | 3 |
 
 The 12B removed the redundant `h` gates and left `cx x3` and `x x2` untouched.
 Correct — the unitary is preserved — but incomplete. Run twice more, no
@@ -115,4 +122,12 @@ project's actual target.
 python examples/quantum-evolve/evolve.py --generations 3 --candidates 3
 ```
 
-Requires `qiskit`. Writes the best candidate to `best.py`.
+Requires `qiskit`. Writes `best.py` **only when a candidate actually beats the
+starting circuit** — writing unconditionally meant a run that improved nothing
+overwrote the committed 3-gate result with the 10-gate original, and there was
+no test to notice.
+
+Candidates are evaluated in a **subprocess with a 30 s timeout**. They used to be
+`exec`'d in this process, so a generated `while True:` hung the run forever,
+indistinguishable from a slow model. `crew.run_check` already had this right:
+model-written code gets a boundary and a clock.
