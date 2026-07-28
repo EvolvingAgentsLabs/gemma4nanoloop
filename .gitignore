@@ -13,4 +13,6 @@ workspace/
 *.egg-info/
 .env
 .env.*
+# ...but the template is the whole point of having one committed.
+!.env.example
 linkedin-article-*.md

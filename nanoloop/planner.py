@@ -138,7 +138,7 @@ def propose_plan(
                 num_ctx=num_ctx or crew.PHASE_NUM_CTX["plan"],
                 temperature=temperature,
                 schema=schema_of(Plan),
-                tools_offered=crew.PHASE_TOOLS["plan"],
+                tools_offered=crew.tools_for("plan"),
                 attempt=attempt,
             )
         except RuntimeError as e:

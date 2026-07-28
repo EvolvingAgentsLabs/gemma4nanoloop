@@ -27,9 +27,14 @@ export OLLAMA_KV_CACHE_TYPE=q8_0
 
 # --- harness ---------------------------------------------------------------
 export NANOLOOP_BACKEND=ollama          # ollama | litert | aistudio
+# GEMMA 4 ONLY. All three backends serve Gemma 4; `check_model()` in
+# model_ollama.py refuses anything else, including via NANOLOOP_MODEL. No Gemini
+# model is used anywhere in this repo.
+#
 # aistudio = gemma-4-26b-a4b-it via Google AI Studio, used as a measurement
-# ORACLE (eval --oracle), not as a development runtime. Key goes in .env
-# (gitignored) as GEMINI_API_KEY=... — never in this file.
+# ORACLE (eval --oracle), not as a development runtime. The endpoint is Google's;
+# the model on it is Gemma. Key goes in .env (gitignored) as GEMINI_API_KEY=...
+# — that is AI Studio's credential name, not a model choice. Never in this file.
 export NANOLOOP_STRUCTURED_MODE=openai  # /v1 only; native /api/chat uses `format`
 # Reasoning OFF. Gemma 4 is a reasoning model and leaving it on measured 8x
 # slower (222s vs 27s on the same prompt). Only /api/chat honours this.

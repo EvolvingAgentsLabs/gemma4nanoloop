@@ -81,7 +81,7 @@ def propose_new_file(
         num_ctx=num_ctx or crew.PHASE_NUM_CTX[phase],
         temperature=temperature,
         schema=schema_of(crew.NewFile),
-        tools_offered=crew.PHASE_TOOLS[phase],
+        tools_offered=crew.tools_for(phase),
         step_index=step_index,
         attempt=attempt,
     )
@@ -110,7 +110,7 @@ def propose(
         num_ctx=num_ctx or crew.PHASE_NUM_CTX[phase],
         temperature=temperature,
         schema=schema_of(Edit),
-        tools_offered=crew.PHASE_TOOLS[phase],
+        tools_offered=crew.tools_for(phase),
         step_index=step_index,
         attempt=attempt,
     )

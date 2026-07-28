@@ -50,8 +50,9 @@ Two facts, known separately for decades:
 Nothing in those two names suggests they are related. No text search, no
 literature index, no gene catalogue would ever put them together:
 """)
-    print(f"    does 'eyeless' contain 'aniridia'? {'aniridia' in 'eyeless'}")
-    print(f"    does 'aniridia' contain 'eyeless'? {'eyeless' in 'aniridia'}")
+    fly, human = "eyeless", "aniridia"
+    print(f"    does '{fly}' contain '{human}'? {human in fly}")
+    print(f"    does '{human}' contain '{fly}'? {fly in human}")
     print("    words in common: none\n")
 
     print("But proteins are not names. They are sequences:\n")

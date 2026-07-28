@@ -96,6 +96,26 @@ def catalog_text() -> str:
     return "\n".join(f"- {s.name}: {s.description}" for s in skills)
 
 
+def parse_params(data: str) -> dict:
+    """Turn a step's `skill_data` into the executor's params.
+
+    One definition, because there were two with different opinions: `crew` raised
+    on invalid JSON and `tools` wrapped it as {"value": data}, so the same bad
+    input from the same model was a step failure on one path and a silent
+    best-effort on the other. Raising is right — the executor's parameters are
+    not a place to guess — and the message goes to the repair loop.
+    """
+    import json
+
+    if not data:
+        return {}
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"skill_data is not valid JSON: {e}") from e
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
 def execute(skill: Skill, params: dict, workspace: Path) -> str:
     """Load and run a skill's deterministic executor.
 

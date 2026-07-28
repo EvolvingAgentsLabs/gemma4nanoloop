@@ -323,6 +323,22 @@ def test_non_python_files_are_not_syntax_checked(tmp_path):
     assert (tmp_path / "notes.md").exists()
 
 
+def test_an_anchor_edit_that_breaks_the_file_is_rejected_too(tmp_path):
+    """The create path was checked and the replace path was not, so a
+    `replacement` with an unbalanced paren spliced straight in and only `ruff`
+    noticed, a gate later and without a line number."""
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+    with pytest.raises(crew.SyntaxErrorInEdit):
+        crew.apply_edit(tmp_path, Edit(path="m.py", anchor="return 1", replacement="return (1"))
+    assert (tmp_path / "m.py").read_text() == "def f():\n    return 1\n"
+
+
+def test_a_valid_anchor_edit_still_applies(tmp_path):
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+    crew.apply_edit(tmp_path, Edit(path="m.py", anchor="return 1", replacement="return 42"))
+    assert (tmp_path / "m.py").read_text() == "def f():\n    return 42\n"
+
+
 def test_syntax_error_reaches_the_repair_loop(tmp_path):
     """SyntaxErrorInEdit is a ValueError, so build_step feeds it back as text."""
     seen = []
@@ -784,3 +800,117 @@ def test_non_test_modules_still_need_the_exact_name(tmp_path):
 def test_a_non_test_symbol_in_a_test_module_needs_its_exact_name(tmp_path):
     (tmp_path / "test_x.py").write_text("def test_a():\n    pass\n")
     assert not crew.defines_symbol(tmp_path, "test_x.py", "make_fixture")
+
+
+# --- telemetry: which step, how deep the repair ------------------------------
+
+
+def test_step_index_and_attempt_reach_the_proposer(tmp_path):
+    """calls.jsonl carries both fields and both were always null: build_step
+    accepted a step_index it never forwarded, so eval/report.py's repair-depth
+    section had nothing to group by."""
+    (tmp_path / "a.py").write_text("A = 1\n")
+    (tmp_path / "b.py").write_text("B = 1\n")
+    seen = []
+
+    def propose(step, ctx_text, feedback, temperature, *, step_index=None, attempt=None):
+        seen.append((step.target_file, step_index, attempt))
+        # Fail the first attempt on b.py so a repair round is recorded too.
+        if step.target_file == "b.py" and attempt == 0:
+            return Edit(path="b.py", anchor="nowhere", replacement="x")
+        name = step.target_file
+        sym = name[0].upper()
+        return Edit(path=name, anchor=f"{sym} = 1", replacement=f"{sym} = 2")
+
+    plan = crew.Plan(
+        steps=[
+            Step(title="one", target_file="a.py", intent="i"),
+            Step(title="two", target_file="b.py", intent="i"),
+        ],
+        acceptance=[],
+    )
+    crew.run_plan(plan, "g", tmp_path, propose, gates=["true"])
+
+    assert seen == [("a.py", 0, 0), ("b.py", 1, 0), ("b.py", 1, 1)]
+
+
+def test_a_four_argument_proposer_still_works(tmp_path):
+    """Hand-written proposers take the four positional arguments and no more;
+    the telemetry is offered, never forced."""
+    (tmp_path / "a.py").write_text("A = 1\n")
+
+    def propose(step, ctx_text, feedback, temperature):
+        return Edit(path="a.py", anchor="A = 1", replacement="A = 2")
+
+    step = Step(title="t", target_file="a.py", intent="i")
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, propose, gates=["true"])
+    assert res.ok
+
+
+def test_takes_telemetry_detects_kwargs_passthrough():
+    assert crew._takes_telemetry(lambda s, c, f, t, **kw: None)
+    assert crew._takes_telemetry(lambda s, c, f, t, step_index=None, attempt=None: None)
+    assert not crew._takes_telemetry(lambda s, c, f, t: None)
+
+
+def test_a_repair_after_an_unparseable_sample_uses_temperature(tmp_path):
+    """A greedy sample that never became an Edit is the planner's degenerate
+    repetition failure, one layer down: rerunning greedy reproduces it, because
+    a prepended error line does not break a loop the decoder is already in."""
+    (tmp_path / "a.py").write_text("A = 1\n")
+    temps = []
+
+    def propose(step, ctx_text, feedback, temperature):
+        temps.append(temperature)
+        if len(temps) == 1:
+            raise ValueError("Unterminated string starting at line 1")
+        return Edit(path="a.py", anchor="A = 1", replacement="A = 2")
+
+    step = Step(title="t", target_file="a.py", intent="i")
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, propose, gates=["true"])
+    assert res.ok
+    assert temps[0] == 0.0
+    assert temps[1] > 0.0
+
+
+def test_a_repair_after_a_gate_failure_stays_greedy(tmp_path):
+    """The changed feedback is what makes the sample different; temperature
+    would only add noise to a model that was just told what to fix."""
+    (tmp_path / "a.py").write_text("A = 1\n")
+    temps = []
+
+    def propose(step, ctx_text, feedback, temperature):
+        temps.append(temperature)
+        target = "A = 2" if len(temps) > 1 else "A = 1 +"
+        return Edit(path="a.py", anchor="A = 1", replacement=target)
+
+    step = Step(title="t", target_file="a.py", intent="i")
+    res = crew.build_step(step, Ctx(goal="g", step=step), tmp_path, propose, gates=["true"])
+    assert res.ok
+    assert temps == [0.0, 0.0]
+
+
+def test_a_definition_nested_in_a_function_does_not_satisfy_a_step(tmp_path):
+    """It exists in the AST and cannot be imported or called by anyone."""
+    (tmp_path / "m.py").write_text("def outer():\n    def by_tag():\n        return []\n")
+    assert not crew.defines_symbol(tmp_path, "m.py", "by_tag")
+
+
+def test_a_method_still_satisfies_a_step(tmp_path):
+    """Most steps add one; a stricter check must not reject them."""
+    (tmp_path / "m.py").write_text("class Store:\n    def by_tag(self):\n        return []\n")
+    assert crew.defines_symbol(tmp_path, "m.py", "by_tag")
+    assert crew.defines_symbol(tmp_path, "m.py", "Store.by_tag")
+
+
+def test_tools_for_refuses_an_unknown_phase():
+    """An unknown phase returning [] would under-report schema cost, which is
+    the one number the phase table exists to make auditable."""
+    assert crew.tools_for("build") == ["read_file", "use_skill"]
+    with pytest.raises(KeyError):
+        crew.tools_for("deploy")
+
+
+def test_tools_for_hands_out_a_copy():
+    crew.tools_for("build").append("run_shell")
+    assert crew.PHASE_TOOLS["build"] == ["read_file", "use_skill"]

@@ -17,13 +17,14 @@ D8  Every candidate starts from a clean tree (see snapshot.py).
 
 Phase-scoped tool binding is the measured win: peak schema cost per call drops
 from ~5,548 tokens to ~817 (-85%) by never offering a tool the current phase
-cannot use.
+cannot use. Read PHASE_TOOLS for what that is today — a per-phase CEILING,
+logged on every call, not a live binding, because the loop as it stands binds
+nothing at all.
 """
 
 from __future__ import annotations
 
 import ast
-import json
 import os
 import re
 import shutil
@@ -170,6 +171,29 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "test": [],  # ~0 tok   - gates are deterministic (D3)
     "ship": ["run_shell"],  # ~817 tok - the peak
 }
+
+# WHAT THIS IS, EXACTLY: the ceiling a phase is ALLOWED to offer, recorded on
+# every call as `tools_offered` so the schema cost of a run is auditable from
+# calls.jsonl rather than asserted here.
+#
+# It is not a live binding, because the loop currently binds NOTHING: the build
+# phase gets structured output and a compiled context (D6), and every capability
+# it would otherwise reach for is either a plan-time decision (skills, D5) or a
+# deterministic gate (D3). The table is the budget the design is held to, and
+# `tools_for()` is the only sanctioned way to read it — so if a phase ever does
+# bind tools, it cannot quietly exceed what was measured.
+
+
+def tools_for(phase: str) -> list[str]:
+    """The tools `phase` may offer. Raises on an unknown phase rather than
+    returning an empty list, which would silently under-report schema cost."""
+    if phase not in PHASE_TOOLS:
+        raise KeyError(
+            f"unknown phase {phase!r}; add it to PHASE_TOOLS with its measured "
+            f"schema cost, do not default it to no tools"
+        )
+    return list(PHASE_TOOLS[phase])
+
 
 # Per-phase context budget. LiteRT-LM tops out at 32K; never design a phase that
 # needs the whole repo (PLAN.md hardware table).
@@ -395,6 +419,13 @@ def apply_edit(root: Path | str, edit: Edit, *, fuzzy: bool | None = None) -> st
     text = target.read_text(encoding="utf-8")
     res = anchors.locate(text, edit.anchor, fuzzy=fuzzy)
     updated = text[: res.start] + edit.replacement + text[res.end :]
+    # Same check as the create path, and for the same reason. An anchor edit can
+    # break a file just as thoroughly as a bad new one — a `replacement` with an
+    # unbalanced paren splices straight in — and without this the file reaches
+    # disk and `ruff check` reports it a gate later as a lint summary. The model
+    # then gets "E999 SyntaxError" instead of the line, the column and the
+    # expected token, which is precisely what _check_syntax exists to avoid.
+    _check_syntax(edit.path, updated)
     target.write_text(updated, encoding="utf-8")
     return res.kind.value
 
@@ -515,11 +546,7 @@ def defines_symbol(workspace: Path | str, path: str, name: str) -> bool:
         tree = ast.parse(target.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
         return False
-    defs = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
-    ]
+    defs = _reachable_defs(tree)
 
     # In a TEST module, the exact function name is not the requirement — that a
     # test exists and covers the thing is. Measured: asked for
@@ -542,6 +569,36 @@ def defines_symbol(workspace: Path | str, path: str, name: str) -> bool:
                 )
         name = member  # owner absent: fall back to the bare member
     return any(n.name == name for n in defs)
+
+
+_DEF = ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+Definition = ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+
+
+def _reachable_defs(tree: ast.AST) -> list[Definition]:
+    """Definitions a caller could actually reach: module level, plus class
+    bodies at any depth.
+
+    `ast.walk` also returns definitions nested INSIDE a function body, which are
+    local names that exist only while that function runs. A step asked to define
+    `by_tag` was therefore satisfied by a `def by_tag` buried inside another
+    function, where nothing can import or call it — the check passed and the
+    feature did not exist. Same failure shape as G1: a mechanism that appears to
+    run while being incapable of doing its job.
+
+    Methods still count, because that is what most steps actually add.
+    """
+    out: list[Definition] = []
+
+    def visit(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, _DEF):
+                out.append(node)
+                if isinstance(node, ast.ClassDef):
+                    visit(node.body)  # methods, nested classes: still reachable
+
+    visit(getattr(tree, "body", []))
+    return out
 
 
 class SyntaxErrorInEdit(ValueError):
@@ -577,13 +634,7 @@ def run_skill(step: Step, workspace: Path | str) -> str:
     if sk is None:
         available = ", ".join(s.name for s in skills_mod.discover()) or "none"
         raise ValueError(f"no skill '{step.skill}'; available: {available}")
-    params: dict = {}
-    if step.skill_data:
-        try:
-            parsed = json.loads(step.skill_data)
-            params = parsed if isinstance(parsed, dict) else {"value": parsed}
-        except json.JSONDecodeError as e:
-            raise ValueError(f"skill_data is not valid JSON: {e}") from e
+    params = skills_mod.parse_params(step.skill_data)
     if not sk.has_executor:
         raise ValueError(f"skill '{step.skill}' has no deterministic executor")
     return skills_mod.execute(sk, params, Path(workspace))
@@ -597,6 +648,29 @@ class StepResult:
     repair_attempts: int
     anchor_kinds: list[str] = field(default_factory=list)
     final_error: str = ""
+
+
+def _takes_telemetry(propose) -> bool:
+    """Does this `propose` accept step_index / attempt?
+
+    Both fields exist on CallRecord and both were always None, because
+    `build_step` accepted a `step_index` it never forwarded and the `propose`
+    closure had nowhere to put it. `eval/report.py` groups by step_index to
+    report repair depth and first-attempt success, so that whole section of the
+    run report has been silently empty — the telemetry the thermal soak needs.
+
+    Asked rather than assumed: the tests, and any caller with a hand-written
+    proposer, legitimately take the four positional arguments and no more.
+    """
+    import inspect
+
+    try:
+        params = inspect.signature(propose).parameters
+    except (TypeError, ValueError):  # a builtin or C callable
+        return False
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return "step_index" in params and "attempt" in params
 
 
 def load_scorer(path: Path | str):
@@ -655,6 +729,7 @@ def build_step(
     repairs = 0
     kinds: list[str] = []
     feedback = ""
+    telemetry = _takes_telemetry(propose)
 
     # A skill step is deterministic: the planner already chose it and supplied
     # the parameters, so there is nothing left for the model to decide (D5).
@@ -692,7 +767,8 @@ def build_step(
         else:
             ctx.repo_map = ""
         try:
-            edit = propose(step, ctx.render(), feedback, temperature)
+            extra = {"step_index": step_index, "attempt": attempt_no} if telemetry else {}
+            edit = propose(step, ctx.render(), feedback, temperature, **extra)
             calls += 1
         except BudgetExhausted:
             # Must escape: swallowing this would turn "stop spending" into a
@@ -764,9 +840,21 @@ def build_step(
     feedback = err
 
     # --- bounded repair, with the exact error fed back ---
+    #
+    # Greedy stays greedy while there is an error to react to: the changed
+    # feedback is what makes the next sample different, and temperature would
+    # only add noise to a model that has just been told exactly what to fix.
+    #
+    # The exception is a sample that never became an Edit at all. That is the
+    # degenerate-repetition failure the planner already had to solve (see
+    # planner.propose_plan): the model loops until the token cap and returns
+    # unterminated JSON, and re-running greedy reproduces it almost exactly,
+    # because a prepended error line does not break a loop the decoder is
+    # already in. Sampling does. Same lesson, same fix, second place it applies.
     while repairs < max_repairs:
         repairs += 1
-        ok, err = attempt(0.0, repairs)
+        degenerate = feedback.startswith("the model did not return a valid Edit")
+        ok, err = attempt(0.3 * repairs if degenerate else 0.0, repairs)
         if ok:
             return StepResult(step, True, calls, repairs, kinds)
         feedback = err
@@ -813,11 +901,7 @@ def symbol_span(text: str, needles: list[str]) -> tuple[int, int] | None:
         tree = ast.parse(text)
     except SyntaxError:
         return None
-    defs = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
-    ]
+    defs = _reachable_defs(tree)
     # Needles are ordered most-specific-first, so the first match wins.
     for needle in needles:
         for node in defs:
@@ -867,7 +951,8 @@ def _build_step_scored(
         ctx.file_slice = _read_slice(workspace, step.target_file, step=step)
         try:
             # Candidate 0 is greedy; the rest explore around it.
-            edit = propose(step, ctx.render(), "", 0.0 if i == 0 else 0.3 * i)
+            extra = {"step_index": step_index, "attempt": i} if _takes_telemetry(propose) else {}
+            edit = propose(step, ctx.render(), "", 0.0 if i == 0 else 0.3 * i, **extra)
             calls += 1
         except BudgetExhausted:
             raise
@@ -961,10 +1046,18 @@ def _read_slice(workspace: Path, path: str, limit: int = 12000, step: Step | Non
     if span:
         # Centre on the definition, then grow outward to fill the budget so the
         # model still sees its neighbours (imports, sibling methods).
+        #
+        # The window length is tracked rather than re-joined each step: the
+        # original rebuilt the whole slice on every iteration, so filling a
+        # 12,000-char budget one line at a time cost O(lines x limit) of copying
+        # on exactly the large files this branch exists to serve.
         start, end = span[0] - 1, span[1]
-        while start > 0 and len("".join(lines[start - 1 : end])) < limit:
+        size = sum(len(ln) for ln in lines[start:end])
+        while start > 0 and size + len(lines[start - 1]) < limit:
             start -= 1
-        while end < len(lines) and len("".join(lines[start : end + 1])) < limit:
+            size += len(lines[start])
+        while end < len(lines) and size + len(lines[end]) < limit:
+            size += len(lines[end])
             end += 1
         body = "".join(lines[start:end])
         head_gap = f"[...{start} earlier lines omitted...]\n" if start else ""
@@ -1164,10 +1257,17 @@ def run_plan(
 ) -> list[StepResult]:
     """Iterate the typed plan (D2). The graph decides the sequence, not the model."""
     ctx = Ctx(goal=goal)
+    snap = kw.get("snapshot")
     out: list[StepResult] = []
     for i, step in enumerate(plan.steps):
         ctx.step = step
         res = build_step(step, ctx, workspace, propose, gates=gates, step_index=i, **kw)
+        # A finished step needs no way back: its work is now the baseline the
+        # next step builds on. Holding the snapshot open costs a full copy of the
+        # workspace in /tmp (CopySnapshot) or a stash entry on the user's repo
+        # (GitSnapshot), neither of which anything would ever clean up.
+        if snap is not None:
+            snap.discard()
         out.append(res)
         if on_step:
             on_step(i, res)
@@ -1308,6 +1408,7 @@ __all__ = [
     "GateResult",
     "StepResult",
     "PHASE_TOOLS",
+    "tools_for",
     "PHASE_NUM_CTX",
     "DEFAULT_GATES",
     "run_gate",

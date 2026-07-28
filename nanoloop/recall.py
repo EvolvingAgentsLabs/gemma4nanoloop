@@ -27,10 +27,17 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import memory
+from .model_ollama import GEMMA_RE, check_model
 
-EMBED_MODEL = os.environ.get("NANOLOOP_EMBED_MODEL", "embeddinggemma")
+# Gemma family, enforced like the generation path (see model_ollama). There is
+# no Gemma 4 embedder, so EmbeddingGemma is the model here — same family, older
+# generation. Anything outside the family is refused rather than documented.
+EMBED_MODEL = check_model(
+    os.environ.get("NANOLOOP_EMBED_MODEL", "embeddinggemma"), family=GEMMA_RE, what="Gemma"
+)
 EMBED_URL = os.environ.get("NANOLOOP_EMBED_URL", "http://localhost:11434/api/embed")
 INDEX_PATH = Path(os.environ.get("NANOLOOP_EMBED_INDEX", "./Memory/.index.json"))
 
@@ -205,20 +212,22 @@ def search(
         return []
     qvec = embed([query_text(query)])[0]
 
-    scored = sorted(
-        (
-            {
-                "note": c.note,
-                "description": c.description,
-                "text": c.text,
-                "score": cosine(qvec, c.vector),
-            }
-            for c in idx
-        ),
-        key=lambda r: -r["score"],
-    )
+    # Annotated because the row mixes str and float: inferred, every value is
+    # `object` and both the sort key and the link expansion below stop
+    # type-checking (three errors that `nanoloop harvest` surfaced on this repo).
+    rows: list[dict[str, Any]] = [
+        {
+            "note": c.note,
+            "description": c.description,
+            "text": c.text,
+            "score": cosine(qvec, c.vector),
+        }
+        for c in idx
+    ]
+    scored = sorted(rows, key=lambda r: -r["score"])
 
-    seen, top = set(), []
+    seen: set[str] = set()
+    top: list[dict[str, Any]] = []
     for r in scored:  # one hit per note, best chunk wins
         if r["note"] in seen:
             continue

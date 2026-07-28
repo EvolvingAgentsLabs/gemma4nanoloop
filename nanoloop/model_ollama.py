@@ -1,5 +1,10 @@
 """Model client for local Gemma 4 12B.
 
+ONE FAMILY. Gemma 4 is the only model this harness runs, and `check_model()`
+enforces it rather than trusting a comment — see the block above GEMMA4_RE. The
+`aistudio` backend talks to a Google endpoint but serves a GEMMA model there; no
+Gemini model is used anywhere in this repo.
+
 TWO TRANSPORTS, AND THE CHOICE IS WORTH 8x WALL CLOCK.
 
     ollama   POST /api/chat   native  — think:false + format   DEFAULT
@@ -55,12 +60,58 @@ except ImportError:
     pass
 
 # base_url, default model. `aistudio` is Google's OpenAI-compatible shim, used as
-# a measurement ORACLE rather than a development runtime — see ORACLE below.
+# a measurement ORACLE rather than a development runtime — see ORACLE below. It
+# serves GEMMA there; the endpoint is Google's, the model is not Gemini.
 BACKENDS = {
     "ollama": ("http://localhost:11434", "gemma4:12b"),
     "litert": ("http://localhost:9379", "gemma4-12b,gpu"),
     "aistudio": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemma-4-26b-a4b-it"),
 }
+
+# ---------------------------------------------------------------------------
+# One model family, enforced
+# ---------------------------------------------------------------------------
+#
+# GEMMA 4 IS THE ONLY FAMILY THIS HARNESS RUNS. That is not a preference, it is
+# the premise of the project: every measurement in IMPLEMENTATION.md, every
+# prompt in planner.py/proposer.py and every budget in PHASE_NUM_CTX was tuned
+# against a 12B Gemma 4 on 16 GB of shared memory. Point it at a different model
+# and the numbers stop meaning anything, silently.
+#
+# `NANOLOOP_MODEL` and `NANOLOOP_BASE_URL` make swapping a model a one-line
+# environment change, so the constraint has to be CHECKED rather than documented.
+# Matches gemma4:12b, gemma4-12b,gpu, gemma-4-26b-a4b-it, gemma4:e4b.
+GEMMA4_RE = re.compile(r"gemma[-_ ]?4", re.IGNORECASE)
+
+# Embeddings are a separate job with no Gemma 4 model to do it: EmbeddingGemma is
+# the Gemma-family embedder (recall.py). Same family, different generation — so
+# the embedding path checks for `gemma` and the generation path for `gemma 4`.
+GEMMA_RE = re.compile(r"gemma", re.IGNORECASE)
+
+
+class UnsupportedModel(Exception):
+    """The configured model is not Gemma 4.
+
+    NOT a RuntimeError, on purpose, and for the reason spelled out in
+    `budget.BudgetExhausted`: `chat()` raises RuntimeError for transient backend
+    trouble and the planner retries three times on it. A wrong model is a
+    configuration error that no retry can fix, so it must not be catchable by a
+    handler that means "try again" — otherwise it costs three calls and reports
+    itself as "the planner returned no valid plan".
+    """
+
+
+def check_model(name: str, *, family: re.Pattern[str] = GEMMA4_RE, what: str = "Gemma 4") -> str:
+    """Return `name`, or raise if it is not in the required family."""
+    if not family.search(name or ""):
+        raise UnsupportedModel(
+            f"{name!r} is not a {what} model. This harness runs {what} and nothing "
+            f"else — the prompts, context budgets and every measured number assume "
+            f"it. Set NANOLOOP_MODEL to a {what} model, or use one of the "
+            f"configured backends: " + ", ".join(f"{k}={v[1]}" for k, v in BACKENDS.items())
+        )
+    return name
+
 
 # Backends that need a bearer token, and where to find it.
 API_KEY_ENV = {"aistudio": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "AISTUDIO_API_KEY")}
@@ -112,8 +163,16 @@ def max_tokens_for(phase: str) -> int:
 
 
 def _endpoint() -> tuple[str, str]:
+    """Base URL and model for the active backend.
+
+    The single chokepoint every call path resolves its model through, which is
+    why the family check lives here rather than at each call site.
+    """
     base, model = BACKENDS.get(BACKEND, BACKENDS["ollama"])
-    return os.environ.get("NANOLOOP_BASE_URL", base), os.environ.get("NANOLOOP_MODEL", model)
+    return (
+        os.environ.get("NANOLOOP_BASE_URL", base),
+        check_model(os.environ.get("NANOLOOP_MODEL", model)),
+    )
 
 
 def build_native_body(
@@ -324,8 +383,23 @@ def chat(
     usage: dict[str, Any] = {}
     try:
         raw, usage, thinking = caller(system, user, num_ctx, temperature, schema, phase)
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as e:
-        err = f"{type(e).__name__}: {e}"
+    # RuntimeError is in the list because that is what `_post` raises for an
+    # HTTP-level refusal (400 unknown model, 401, 429 quota, 404). It used to
+    # escape here, which broke the promise in this docstring exactly where it
+    # matters most: the failures that carry a reason from the server were the
+    # only ones with no record in calls.jsonl and no charge against the budget,
+    # so a misconfigured backend let the planner's three retries run for free
+    # and left nothing behind to explain the run.
+    except (
+        urllib.error.URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        RuntimeError,
+    ) as e:
+        # `_post` already writes a full sentence (status, URL, server body);
+        # prefixing "RuntimeError:" onto it would only add noise to the log.
+        err = str(e) if isinstance(e, RuntimeError) else f"{type(e).__name__}: {e}"
     latency_ms = int((time.monotonic() - t0) * 1000)
     budget_mod.spend((usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0))
 
@@ -364,7 +438,12 @@ def chat(
 
 def probe() -> dict[str, Any]:
     """Phase 0 liveness check: does this endpoint answer at all?"""
-    base_url, model = _endpoint()
+    try:
+        base_url, model = _endpoint()
+    except UnsupportedModel as e:
+        # A probe reports; it does not raise. A misconfigured model is exactly
+        # the kind of thing Phase 0 exists to surface before a real run.
+        return {"backend": BACKEND, "ok": False, "error": str(e)}
     if BACKEND in API_KEY_ENV and not api_key():
         return {
             "backend": BACKEND,

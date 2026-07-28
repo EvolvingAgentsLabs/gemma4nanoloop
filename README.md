@@ -61,6 +61,13 @@ ollama pull gemma4:12b
 ollama pull embeddinggemma # for semantic recall (Phase 6)
 ```
 
+**Gemma 4 is the only family this runs**, and it is enforced rather than
+documented: `model_ollama.check_model()` refuses any model outside it, including
+one set through `NANOLOOP_MODEL`. The `aistudio` backend uses a Google endpoint
+but serves `gemma-4-26b-a4b-it` on it — no Gemini model is used anywhere here.
+The one exception is embeddings, where there is no Gemma 4 model: `recall.py`
+requires the Gemma family and gets EmbeddingGemma.
+
 ## Use
 
 ```bash
@@ -227,7 +234,7 @@ eval/               fixtures, measurement harnesses, fixture-repo
 
 ## Status
 
-**275 tests green**, `ruff check` and `ruff format --check` clean. Everything
+**305 tests green**, `ruff check` and `ruff format --check` clean. Everything
 below was measured against a live model, not reasoned about.
 
 | | |

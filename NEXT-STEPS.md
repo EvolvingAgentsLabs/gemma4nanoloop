@@ -11,7 +11,8 @@ Reading order: `README.md` → `GAPS.md` (what is missing, measured) →
 
 ## Where it stands
 
-**275 tests green**, `ruff` clean, published at
+**305 tests green**, `ruff check .` and `ruff format --check .` clean at the
+repo root — it now passes its own preflight. Published at
 `EvolvingAgentsLabs/gemma4nanoloop`.
 
 Closed: every blocker that stood between "supervised executor" and "something
@@ -25,6 +26,106 @@ you can leave alone".
 | ~~G4~~ | whole-file generation measured at **93.8%** |
 | ~~G7~~ | **preflight**: refuses to start in an already-broken repo |
 | ~~AUTONOMY 1–5~~ | harvest, deliver/PR, budget, failure memory |
+
+---
+
+## Fixed on 2026-07-28 — a code review of the harness itself
+
+None of these came from GAPS.md. They came from reading the code that runs the
+loop rather than the loop's own output, which is where they had all been hiding.
+
+**`--snapshot git` destroyed work.** `GitSnapshot.save()` was `git stash push`,
+which reverts the tree to HEAD — a different operation from `CopySnapshot`,
+which copies aside and leaves the tree alone. Since the crew commits nothing
+until delivery, the save() at the start of step 2 threw step 1's edit into the
+stash and out of the working tree. A three-step plan finished with only the last
+step applied, and nothing reported a problem, because every gate had passed at
+the time it ran. save() now stashes and immediately re-applies; success paths
+discard instead of leaking a stash entry per step. Both backends are now
+parametrized over the same tests.
+
+**Anchor edits were never syntax-checked.** `_check_syntax` ran only on the
+create path, so a `replacement` with an unbalanced paren spliced straight into a
+file and only `ruff` noticed, a gate later, as a lint summary instead of a line
+and a column. That is exactly the failure the function was written for.
+
+**HTTP refusals were invisible.** `_post` raises `RuntimeError` for 400/401/429;
+`chat()` did not catch it, so the failures that carry a reason from the server
+were the only ones with no line in `calls.jsonl` and no charge against
+`--max-calls`. A misconfigured backend let the planner's three retries run free
+and left nothing behind to explain the run.
+
+**`step_index` was always null** — 28/28 records in the shipped `calls.jsonl`.
+`build_step` accepted a `step_index` it never forwarded, and `eval/report.py`
+groups by it to report repair depth and first-attempt success, so that section
+of every report has been silently empty. This is the sixth occurrence of the
+pattern named at the bottom of this file, and the telemetry the thermal soak
+needs.
+
+**The budget leaked between harvest tasks.** `cmd_run` cleared the process-global
+budget only on the happy path, so a rejected plan gate or any raise left the
+finished task's spending active for the next one.
+
+**A nested `def` satisfied a step.** `defines_symbol` walked the whole AST, so a
+`def by_tag` buried inside another function — unimportable, uncallable — counted
+as the step's work. Module level and class bodies now; methods still count.
+
+**`repomap` walked what it was about to throw away.** `rglob("*")` enumerated
+and sorted the entire tree, `.venv` included, before applying `SKIP_DIRS`, and
+the map is rebuilt every planning round. Pruning during the walk plus one
+read+parse per file instead of two: 16,931 entries walked → 165, 0.211s →
+0.051s on this repo, byte-identical output.
+
+**One model family, enforced.** `tools/gen_image.py` called `gemini-3-pro-image`
+and was the only non-Gemma model in the repo; it is gone. `check_model()` now
+refuses anything outside Gemma 4 at `_endpoint()`, the chokepoint every call
+path resolves through, including a model set via `NANOLOOP_MODEL`. Embeddings
+are the one exception and are checked against the Gemma family, since there is
+no Gemma 4 embedder. The `aistudio` backend stays: it is a Google endpoint
+serving `gemma-4-26b-a4b-it`, not a Gemini model.
+
+### Then it was pointed at this repo, which found two more
+
+Not a real repo in the sense of item 1 below — but the first time the crew was
+aimed at anything other than a fixture, and it paid for itself immediately.
+
+**`harvest` called this repo green while mypy had checked nothing.** `mypy .`
+exited **2** with `Duplicate module named "execute"` (two skills, one
+`execute.py` each, loaded by path and never imported as modules). A
+configuration error is reported without a line number, so the per-error regex
+matched nothing, `from_mypy` returned `[]`, and the CLI printed *"nothing to do
+— the repo's signals are all green"* over a type checker that had refused to
+start. Exit codes are now read properly — 0 clean, 1 work, anything else
+`SourceUnavailable` — and a source that could not run is reported before the
+verdict, with exit 5 instead of 0. Same for pytest exit 5, which is what a
+mis-scoped `--tests` looks like from the outside.
+
+With mypy excluded from `Skills/` and actually running, it found **7 real type
+errors in the package**, three of them in code written earlier the same day.
+All fixed; `mypy nanoloop/` is clean and is now a source harvest can use.
+
+**The map fed the planner 57 of the crew's own session files.** `.nanoloop/`
+was not in `SKIP_DIRS`, so 30% of the map's rows were the runtime's own
+bookkeeping, each rendering as `— {`, costing ~664 tokens of the 16,384-token
+plan budget and growing with every run. Skipped now, along with a first line
+that is only punctuation. 226 rows → 168, ~5,712 → ~5,139 tokens. (The 300-file
+truncation limit was NOT being hit: 165 mappable files. G5 is still ahead, not
+here.)
+
+Verified against the local 12B afterwards: `probe` ok at 17.6 s, and `plan` on
+the real 165-file map returned a schema-valid typed plan.
+
+Smaller: `PHASE_TOOLS` is read through `tools_for()` and documented as the
+per-phase ceiling it actually is rather than a binding the loop does not
+perform; `skills.parse_params()` replaces two copies of skill-argument parsing
+that disagreed about invalid JSON; `tools.WORKDIR` follows `--workspace` instead
+of a stale import-time env read; `_read_slice` grows its window in linear time;
+`.env.example` is no longer swallowed by `.gitignore`.
+
+Deliberately NOT done: `recall.py` and `memory.py` (~400 lines) are reachable
+only from `eval/run_recall.py` and from tools nothing binds, and most of
+`session.py` has no live writer. That is a product decision about Phase 6 and
+resume, not a code fix — flagged, left alone.
 
 ---
 
@@ -98,8 +199,16 @@ version: warn when a goal touches a symbol referenced elsewhere, using the
    RETRY.** `BudgetExhausted` deriving from `RuntimeError` made the planner burn
    three extra calls and report a false diagnosis.
 
+8. **Two implementations of one concept must be tested against the same
+   tests.** `CopySnapshot` and `GitSnapshot` both claimed to be D8 and only one
+   was: `save()` meant "copy aside" in one and "revert the tree" in the other.
+   Six tests covered the first, one covered `make()` returning the second's
+   type, and the difference cost committed-nowhere work. Parametrize.
+
 The pattern behind most of these: **a mechanism that appears to run while being
-incapable of doing its job.** It has recurred five times. Suspect it first.
+incapable of doing its job.** It has now recurred six times — the newest being
+`step_index`, a field written on every call record and never once populated.
+Suspect it first.
 
 ---
 
@@ -108,7 +217,7 @@ incapable of doing its job.** It has recurred five times. Suspect it first.
 ```bash
 source ./env.sh                 # Ollama config; restart `ollama serve` after
 uv pip install -e ".[dev]"
-python -m pytest -q             # expect 275
+python -m pytest -q             # expect 305
 ```
 
 Backends: `NANOLOOP_BACKEND=ollama` (local 12B, ~30 s/call) or `aistudio`
