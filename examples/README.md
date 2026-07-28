@@ -10,7 +10,7 @@ where that claim can actually be tested, because the signal is exact.
 
 | example | the oracle | what it shows |
 |---|---|---|
-| [`bioinformatics-eyeless`](bioinformatics-eyeless/) | a conserved protein domain, documented and stable | the discovery itself, runnable offline in seconds |
+| [`bioinformatics-eyeless`](bioinformatics-eyeless/) | a conserved domain, plus a shuffled null that says no | the discovery itself, and its significance measured rather than asserted |
 | [`quantum-circuit-opt`](quantum-circuit-opt/) | unitary equivalence, mathematically exact | acceptance criteria a stub cannot satisfy |
 | [`quantum-evolve`](quantum-evolve/) | equivalence as a gate, gate count as a gradient | scored search — now in the crew as `run --optimize` |
 
@@ -25,7 +25,10 @@ python examples/bioinformatics-eyeless/discover.py
 ```
 
 A fly gene called `eyeless`. A human disease called `aniridia`. The names share
-nothing. The sequences share **133 residues at 93% identity**.
+nothing. The sequences share **133 residues at 93% identity** — and the example
+does not ask you to take "that cannot be chance" on faith. It shuffles PAX6 a
+hundred times to build the null in front of you: the real alignment lands **133
+standard deviations** outside it, in 0.7 seconds.
 
 It is the exercise that opens *Developing Bioinformatics Computer Skills*
 (O'Reilly, 2001) — front-page science in 1995, now two public sequences and a
