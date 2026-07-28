@@ -25,3 +25,47 @@ def test_paired_domain_is_found():
 def test_the_conserved_block_is_long_enough_to_be_a_domain():
     blocks = conserved_blocks(EYELESS_DROME, PAX6_HUMAN)
     assert max(b["length"] for b in blocks) > 100
+
+
+# --- the block is not the domain (the correction that mattered) --------------
+
+
+def test_the_homeodomain_is_ninety_percent_not_sixty():
+    """The bug this pins: the ungapped block containing the homeodomain runs
+    PAX6 182-327 and reports 60%, because it also carries flanks at 46% and 35%.
+    The domain itself is 90%, and the book's own numbers (80 aa at 85%) agree
+    with that, not with the block's."""
+    from conserved import identity_over
+
+    d = identity_over(EYELESS_DROME, PAX6_HUMAN, 208, 267)
+    assert d["aligned"] == 60
+    assert d["percent_identity"] > 85
+
+    block = next(
+        b
+        for b in conserved_blocks(EYELESS_DROME, PAX6_HUMAN)
+        if b["subject_start"] < 208 < b["subject_end"]
+    )
+    assert block["percent_identity"] < 65  # the block dilutes it by 30 points
+    assert block["length"] > 2 * d["aligned"]
+
+
+def test_the_paired_domain_agrees_with_its_block():
+    """It only looks fine because a gap happens to fall just after it — which is
+    why the domain has to be measured, not assumed from the block."""
+    from conserved import identity_over
+
+    d = identity_over(EYELESS_DROME, PAX6_HUMAN, 4, 136)
+    assert d["percent_identity"] > 90
+
+
+def test_totals_count_the_whole_alignment_not_the_filtered_blocks():
+    """ "217 of 311 aligned residues" counted only blocks >= 20aa — 80% of them."""
+    from conserved import alignment_totals
+
+    whole = alignment_totals(EYELESS_DROME, PAX6_HUMAN)
+    in_blocks = sum(b["length"] for b in conserved_blocks(EYELESS_DROME, PAX6_HUMAN))
+    assert whole["aligned"] > in_blocks
+    assert whole["identities"] > sum(
+        b["identities"] for b in conserved_blocks(EYELESS_DROME, PAX6_HUMAN)
+    )

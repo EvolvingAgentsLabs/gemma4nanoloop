@@ -12,12 +12,19 @@ algorithm from 1981.
 
 from __future__ import annotations
 
-from conserved import align, conserved_blocks
+from conserved import align, alignment_totals, conserved_blocks, identity_over
 from sequences import EYELESS_DROME, PAX6_HUMAN
-from significance import DEFAULT_TRIALS, shuffled_scores, significance, verdict
+from significance import (
+    DEFAULT_TRIALS,
+    above_noise,
+    block_identity_null,
+    shuffled_scores,
+    significance,
+    verdict,
+)
 
-# NCBI places these domains in human PAX6. They are used only to LABEL what the
-# alignment finds on its own — never to find it.
+# Annotated domains in human PAX6 (UniProt P26367). They are used only to LABEL
+# what the alignment finds on its own — never to find it.
 DOMAINS = [
     (4, 136, "paired domain", "grips regulatory DNA"),
     (208, 267, "homeodomain", "the second DNA grip"),
@@ -25,10 +32,24 @@ DOMAINS = [
 
 
 def label(subject_start: int, subject_end: int) -> str:
+    """Which annotated domain does this block overlap, and how completely?
+
+    The qualifier matters and used to be missing. A block running 182-327
+    OVERLAPS the homeodomain (208-267) but is 2.4x longer than it, so calling it
+    "the homeodomain" and printing the block's 60% identity describes one of the
+    most conserved DNA-binding motifs known as barely above average. The domain
+    itself is 90%. Say "contains" when that is what is true.
+    """
     for lo, hi, name, what in DOMAINS:
         if subject_start <= hi and lo <= subject_end:
+            covered = min(subject_end, hi) - max(subject_start, lo) + 1
+            if (
+                covered < (hi - lo + 1) * 0.9
+                or (subject_end - subject_start + 1) > (hi - lo + 1) * 1.5
+            ):
+                return f"contains the {name}"
             return f"{name} — {what}"
-    return "linker, far freer to mutate"
+    return "no annotated domain here"
 
 
 def rule(char: str = "─") -> None:
@@ -92,26 +113,56 @@ literature index, no gene catalogue would ever put them together:
     matched = sum(b["identities"] for b in blocks)
 
     print(f"LOCAL ALIGNMENT (Smith–Waterman, BLOSUM62)   score = {alignment.score:.0f}\n")
-    print(f"{'eyeless':>14}   {'PAX6':>12}   {'length':>6} {'identity':>10}   what it is")
+
+    # What does chance produce? Blocks are scored against that, not eyeballed.
+    null = block_identity_null(EYELESS_DROME, PAX6_HUMAN)
+
+    print(f"{'eyeless':>14}   {'PAX6':>12}   {'length':>6} {'identity':>9}   what it is")
     for b in blocks:
+        real = above_noise(b["percent_identity"], null)
+        mark = " " if real else "*"
         print(
             f"{b['query_start']:>6}-{b['query_end']:<7} "
             f"{b['subject_start']:>5}-{b['subject_end']:<6} "
-            f"{b['length']:>6} {b['percent_identity']:>9.0f}%   "
+            f"{b['length']:>6} {b['percent_identity']:>8.0f}%{mark}  "
             f"{label(b['subject_start'], b['subject_end'])}"
         )
+    noise = [b for b in blocks if not above_noise(b["percent_identity"], null)]
+    if noise:
+        print(
+            f"\n  * indistinguishable from chance: shuffled PAX6 yields blocks averaging\n"
+            f"    {sum(null) / len(null):.0f}% identity, up to {max(null):.0f}%. A block at "
+            f"{noise[0]['percent_identity']:.0f}% is not a weakly\n"
+            f"    conserved linker — nothing survived there, and the aligner kept\n"
+            f"    extending only because the score stayed positive."
+        )
+
+    # Blocks are what the alignment found unaided. The annotated domains are a
+    # separate question, asked afterwards, and they are where the real numbers
+    # live: an ungapped block that spans a domain plus its flanks averages the
+    # two together and hides the domain.
+    print("\nAnd within the ANNOTATED domains themselves:\n")
+    print(f"{'domain':>22}   {'PAX6':>9}   {'aligned':>7} {'identity':>9}")
+    for lo, hi, name, _ in DOMAINS:
+        d = identity_over(EYELESS_DROME, PAX6_HUMAN, lo, hi)
+        print(f"{name:>22}   {f'{lo}-{hi}':>9}   {d['aligned']:>7} {d['percent_identity']:>8.0f}%")
+
+    whole = alignment_totals(EYELESS_DROME, PAX6_HUMAN)
+    print(
+        f"\nOver the WHOLE alignment: {whole['identities']} of {whole['aligned']} "
+        f"aligned residues identical ({whole['percent_identity']:.0f}%)."
+    )
+    print(f"Of those, {total} sit in blocks of 20 residues or more, {matched} of them identical.\n")
 
     best = max(blocks, key=lambda b: b["percent_identity"])
-    print(f"\n{matched} of {total} aligned residues are IDENTICAL.")
     print(
-        f"Best block: {best['length']} consecutive residues at "
-        f"{best['percent_identity']:.0f}% identity.\n"
+        f"The first 60 residues of the best block "
+        f"({best['length']} residues at {best['percent_identity']:.0f}%), "
+        f"one above the other:\n"
     )
-
-    print("The first 60 residues of that block, one above the other:\n")
     q = EYELESS_DROME[best["query_start"] - 1 : best["query_end"]][:60]
     s = PAX6_HUMAN[best["subject_start"] - 1 : best["subject_end"]][:60]
-    bar = "".join("|" if a == b else " " for a, b in zip(q, s))
+    bar = "".join("|" if a == b else " " for a, b in zip(q, s, strict=False))
     print(f"    fly    {q}")
     print(f"           {bar}")
     print(f"    human  {s}\n")
