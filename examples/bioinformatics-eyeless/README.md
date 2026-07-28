@@ -30,15 +30,60 @@ biologists to turn a question into a computational experiment.
 ## What it finds
 
 ```
-       eyeless           PAX6    length   identity   what it is
-    57-189         5-137       133         93%   paired domain — grips regulatory DNA
-   402-547       182-327       146         60%   homeodomain — the second DNA grip
-   598-629       371-402        32         19%   linker, far freer to mutate
+       eyeless           PAX6   length  identity   what it is
+    57-189         5-137       133       93%   paired domain — grips regulatory DNA
+   402-547       182-327       146       60%   contains the homeodomain
+   598-629       371-402        32       19%*  no annotated domain here
+
+  * indistinguishable from chance
 ```
 
 The revealing part is not *that* they match: it is **where**. What survives
 intact is precisely the piece that touches DNA, because changing it breaks the
 protein. Everything in between has drifted freely — nothing was watching it.
+
+### A block is not a domain, and the difference is 30 points
+
+That second row says 60%, and a biologist should immediately distrust it: the
+homeodomain is one of the most conserved DNA-binding motifs known.
+
+The number is an artefact of what `conserved_blocks` returns. BLAST reports
+**HSPs** — separate local alignments, each with its own E-value, which is why
+the book gets two clean regions. This example takes **one** Smith–Waterman
+alignment and splits it at its gaps, so the block containing the homeodomain
+also carries its flanks:
+
+| PAX6 region | aligned | identity |
+|---|---|---|
+| paired domain 4–136 | 132 | **94%** |
+| **homeodomain 208–267** | 60 | **90%** |
+| flank before it, 182–207 | 26 | 46% |
+| flank after it, 268–327 | 60 | 35% |
+
+**The homeodomain is 90% over 60 residues** — which is what the book's own
+numbers say too (80 aa at 85%), not 60%. So `discover.py` now reports the blocks
+the alignment found *and*, separately, the identity inside each annotated
+domain. The discovery still leans on nothing but the alignment; the annotation
+only ever labels it afterwards.
+
+### The third row is not a linker. It is noise
+
+19% identity across 32 residues used to be presented as "linker, far freer to
+mutate" — a functional reading it never earned. Align eyeless against **shuffled**
+PAX6 and the aligner still produces blocks: 40 shuffles give 74 of them,
+averaging 25.6% identity and reaching 45%.
+
+```
+  real block len=133 id=93.2%  ->  0/74 shuffled blocks match it   signal
+  real block len=146 id=59.6%  ->  0/74 shuffled blocks match it   signal
+  real block len= 32 id=18.8%  -> 68/74 shuffled blocks match it   NOISE
+```
+
+It is *worse than average noise*. Nothing survived in that region at all — the
+aligner kept extending because the score stayed positive, which is what local
+aligners do. The honest version of the lesson is stronger than the old one:
+where evolution was not watching, the result is indistinguishable from a
+shuffle.
 
 ## Could it be chance? Don't assert it — measure it
 
@@ -73,7 +118,13 @@ everything.
 
 That licensed the proposal that `eyeless` and the aniridia gene descend from a
 common ancestral gene: the same switch turns on a fly's eye and yours. It was
-later confirmed experimentally — mouse PAX6, placed in a fly, induces eyes.
+later confirmed experimentally — mouse PAX6, placed in a fly, induces eyes
+(Halder, Callaerts & Gehring, 1995).
+
+One simplification worth undoing: *Drosophila* has **two** Pax6 paralogues,
+`eyeless` and `twin of eyeless` (`toy`), plus the more distant `eyegone`. `toy`
+sits upstream of `ey` in the cascade. "The fly's Pax6 gene" is a convenience;
+the duplication is part of the real story.
 
 **And a warning the book stresses:** sequence similarity produces a hypothesis,
 not a proof. Confirming it takes real experiments.
@@ -92,14 +143,45 @@ write and repair the analysis code for you. The question is yours.
 ## The book's numbers do NOT reproduce, and that teaches something
 
 The book reported the paired domain at eyeless 24–169 against a **447 aa** human
-PAX6 from the PIR database. UniProt today gives **422 aa**, and the coordinates
-come out at 57–189 / 5–137.
+PAX6 from PIR (`A41644`), 128/146 identical, E = 5×10⁻⁶⁷. Here it comes out at
+eyeless 57–189 against PAX6 5–137, 133 residues at 93%.
 
-The biology is unchanged; the database entries moved in 25 years. That is why
-the sequences are **vendored** into the repo rather than downloaded: an example
-that depends on a live database stops meaning the same thing without telling
-you. This is computational reproducibility — the thing chapter 2 of the book
-insisted on teaching.
+What the book actually reports, for the two regions BLAST returned:
+
+| | query | subject | identities | positives | gaps | score | E |
+|---|---|---|---|---|---|---|---|
+| region 1 | 24–169 | 17–161 | 128/146 (87%) | 134/146 (91%) | 1/146 | 256 bits | 5e-67 |
+| region 2 | 398–477 | 222–301 | 68/80 (85%) | 74/80 (92%) | — | 142 bits | 1e-32 |
+
+**Two things changed, and only one of them is the database.**
+
+1. **The entries moved.** The human protein is `P26367` in UniProt today, **422
+   aa**, against the 447 aa PIR entry. The fly coordinates moved too — 24 → 57
+   at one end and 398 → 402 at the other, which is not a constant offset, so the
+   sequences differ by internal indels and not merely by a longer N-terminus.
+   **The book does not name the eyeless entry it used**: its figure shows the
+   alignment with an unlabelled `Query`. So there is nothing to look up, and
+   nothing here is going to invent one.
+2. **The method changed.** The book ran BLAST, which reports **HSPs** — separate
+   local alignments, each with its own E-value. This runs a full Smith–Waterman
+   with BLOSUM62 and −11/−1 gaps, and reports the ungapped blocks of a *single*
+   alignment. The book does not state its matrix or whether low-complexity
+   filtering was on, so those are not claimed here either.
+
+**And the book's region 2 is the evidence for the correction above.** It is
+**80 residues at 85%**, bracketing the homeodomain with a few residues either
+side. Our block over the same biology is 146 residues at 60%, because one
+Smith–Waterman alignment runs straight through the domain and its flanks and
+averages them. The domain measured on its own is 90%. The book, the annotation
+and `identity_over()` agree; only the raw block disagrees, and it is the raw
+block that was wrong to label.
+
+The biology is unchanged in both cases. That is why the sequences are
+**vendored** rather than downloaded: an example that depends on a live database
+stops meaning the same thing without telling you. It is also why the method is
+spelled out rather than described as "an alignment" — chapter 2's insistence on
+recording parameters, versions and inputs is the same point, and "the databases
+moved" would have been half an answer.
 
 ## Two exercises for the crew
 
