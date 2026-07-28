@@ -32,6 +32,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -144,6 +145,22 @@ def environment_problems(output: str) -> set[str]:
     return set(MISSING_MODULE.findall(output))
 
 
+class SourceUnavailable(Exception):
+    """A source could not produce a verdict at all.
+
+    NOT the same as "this source found nothing", and the difference is the whole
+    point. Found by pointing the crew at its own repo: `mypy .` exited 2 with
+    `Duplicate module named "execute"` — a configuration error, reported without
+    a line number, so the per-error regex matched nothing and `from_mypy`
+    returned []. `harvest` then printed "nothing to do — the repo's signals are
+    all green" over a type checker that had not checked anything.
+
+    That is the failure shape this project keeps meeting (NEXT-STEPS.md): a
+    mechanism that appears to run while being incapable of doing its job. Same
+    answer as `preflight` gives for a missing gate — say so, loudly.
+    """
+
+
 def from_pytest(workspace: Path, tests: str = "") -> list[Task]:
     """One task per failing test. The richest source there is.
 
@@ -157,6 +174,16 @@ def from_pytest(workspace: Path, tests: str = "") -> list[Task]:
     code, out = _run(workspace, args, timeout=1800)
     if code == 0:
         return []
+    # pytest: 1 = tests failed (work), 5 = nothing collected, 2/3/4 = it could
+    # not run. Only 1 is a harvest. 5 usually means `--tests` points nowhere,
+    # which looks exactly like a green suite from the outside.
+    if code == 5:
+        raise SourceUnavailable(
+            f"pytest collected no tests{' under ' + tests if tests else ''} — "
+            f"scope `--tests` at a path that has some"
+        )
+    if code != 1:
+        raise SourceUnavailable(f"pytest could not run (exit {code}): {out.strip()[-300:]}")
 
     missing = environment_problems(out)
     tasks = []
@@ -184,9 +211,20 @@ def from_mypy(workspace: Path) -> list[Task]:
     code, out = _run(workspace, ["mypy", ".", "--no-error-summary", "--no-color-output"])
     if code == 0:
         return []
+    # 0 = clean, 1 = type errors found, anything else = mypy itself could not
+    # run. Only the middle case is work.
+    if code != 1:
+        raise SourceUnavailable(
+            f"mypy could not check this repo (exit {code}): {out.strip()[:300]}"
+        )
     by_file: dict[str, list[str]] = {}
     for m in MYPY_ERROR.finditer(out):
         by_file.setdefault(m.group("file"), []).append(f"line {m.group('line')}: {m.group('msg')}")
+    if not by_file:
+        raise SourceUnavailable(
+            f"mypy reported errors but none carried a file and line, so nothing "
+            f"could be turned into a task: {out.strip()[:300]}"
+        )
     tasks = []
     for path, errors in by_file.items():
         listed = "\n".join(f"  - {e}" for e in errors[:10])
@@ -220,6 +258,10 @@ def from_ruff(workspace: Path) -> list[Task]:
     code, out = _run(workspace, ["ruff", "check", ".", "--output-format=concise"])
     if code == 0:
         return []
+    if code != 1:  # 1 = violations found; anything else is ruff failing to run
+        raise SourceUnavailable(
+            f"ruff could not check this repo (exit {code}): {out.strip()[:300]}"
+        )
     by_file: dict[str, list[str]] = {}
     for m in RUFF_ISSUE.finditer(out):
         by_file.setdefault(m.group("file"), []).append(
@@ -276,14 +318,30 @@ def regressions(workspace: Path | str, baseline: set[str], tests: str = "") -> s
     return failing_tests(workspace, tests) - baseline
 
 
-SOURCES = {"pytest": from_pytest, "mypy": from_mypy, "ruff": from_ruff}
+# `from_pytest` alone takes the `tests` scope, so the values are not one uniform
+# signature; the call site branches on the name and the annotation says so.
+SOURCES: dict[str, Callable[..., list[Task]]] = {
+    "pytest": from_pytest,
+    "mypy": from_mypy,
+    "ruff": from_ruff,
+}
 
 
-def harvest(workspace: Path | str, sources: list[str] | None = None, tests: str = "") -> list[Task]:
+def harvest(
+    workspace: Path | str,
+    sources: list[str] | None = None,
+    tests: str = "",
+    on_problem=None,  # (source, reason) -> None
+) -> list[Task]:
     """Collect work from the repo's own failing signals.
 
     Order matters: pytest first, because a failing test is the best-specified
     task available and fixing it often clears lint and type noise on the way.
+
+    `on_problem` is called for a source that could not produce a verdict. One
+    broken source still must not kill the harvest — but it must not be
+    indistinguishable from a clean one either, which is what swallowing the
+    exception did (see SourceUnavailable).
     """
     workspace = Path(workspace)
     picked = sources or ["pytest", "mypy", "ruff"]
@@ -294,8 +352,12 @@ def harvest(workspace: Path | str, sources: list[str] | None = None, tests: str 
             continue
         try:
             tasks.extend(fn(workspace, tests) if name == "pytest" else fn(workspace))
-        except Exception:  # noqa: BLE001 - one broken source must not kill harvest
-            continue
+        except SourceUnavailable as e:
+            if on_problem:
+                on_problem(name, str(e))
+        except Exception as e:  # noqa: BLE001 - one broken source must not kill harvest
+            if on_problem:
+                on_problem(name, f"{type(e).__name__}: {e}")
     return tasks
 
 

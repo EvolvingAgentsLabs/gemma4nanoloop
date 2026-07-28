@@ -6,9 +6,15 @@ A Session persists across runs to ./.nanoloop/sessions/<id>.json. It tracks:
   - a compact transcript (so a resumed run gets prior context),
   - human-in-the-loop decisions (audit of approvals/rejections).
 
-This is deliberately file-backed (no extra deps): conversation checkpointing
-lives in LangGraph's checkpointer keyed by thread_id == session id, while the
-durable, human-readable record lives here.
+This is deliberately file-backed and dependency-free.
+
+WHAT IS ACTUALLY WIRED UP TODAY: `goal`, and `decisions` via the human gates in
+`tools.human_review`. The task log and the transcript are carried over from the
+nanoLoop fork and nothing in the current graph writes them — there is no resume
+path (GAPS.md G8), and the crew never accumulates a transcript by design (D6).
+The docstring used to describe them as backed by LangGraph's checkpointer, which
+left with the DeepAgents orchestrator (D1). Left in place rather than deleted
+because resume is a named next step; do not read them as live state.
 """
 
 from __future__ import annotations

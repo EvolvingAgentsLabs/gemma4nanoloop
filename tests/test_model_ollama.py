@@ -11,7 +11,61 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from nanoloop import model_ollama
+
+# --- one family: Gemma 4 and nothing else ------------------------------------
+
+
+def test_every_configured_backend_serves_gemma4():
+    """Including `aistudio`: a Google endpoint, but a Gemma model on it."""
+    for name, (_, model) in model_ollama.BACKENDS.items():
+        assert model_ollama.check_model(model) == model, name
+
+
+def test_a_non_gemma_model_is_refused():
+    for name in ("gemini-3-pro", "gpt-4o", "llama3:8b", "gemini-3-pro-image"):
+        with pytest.raises(model_ollama.UnsupportedModel):
+            model_ollama.check_model(name)
+
+
+def test_an_older_gemma_is_refused_by_the_generation_path():
+    """Family is not enough — the whole harness is tuned to Gemma 4."""
+    with pytest.raises(model_ollama.UnsupportedModel):
+        model_ollama.check_model("gemma3:12b")
+
+
+def test_the_env_override_cannot_smuggle_another_family(monkeypatch):
+    """NANOLOOP_MODEL is a one-line swap, so the check has to live at the
+    chokepoint every call path resolves through."""
+    monkeypatch.setenv("NANOLOOP_MODEL", "gemini-3-pro")
+    with pytest.raises(model_ollama.UnsupportedModel):
+        model_ollama._endpoint()
+    monkeypatch.setenv("NANOLOOP_MODEL", "gemma4:12b")
+    assert model_ollama._endpoint()[1] == "gemma4:12b"
+
+
+def test_unsupported_model_is_not_a_runtimeerror():
+    """Same rule as BudgetExhausted: an exception meaning STOP must not be
+    catchable by the planner's handler, which means RETRY."""
+    assert not issubclass(model_ollama.UnsupportedModel, RuntimeError)
+
+
+def test_probe_reports_a_bad_model_instead_of_raising(monkeypatch):
+    monkeypatch.setenv("NANOLOOP_MODEL", "gpt-4o")
+    out = model_ollama.probe()
+    assert out["ok"] is False
+    assert "not a Gemma 4 model" in out["error"]
+
+
+def test_the_embedder_stays_in_the_gemma_family():
+    from nanoloop import recall
+
+    assert "gemma" in recall.EMBED_MODEL.lower()
+    with pytest.raises(model_ollama.UnsupportedModel):
+        model_ollama.check_model("nomic-embed-text", family=model_ollama.GEMMA_RE, what="Gemma")
+
 
 # --- reasoning: the 8x finding ----------------------------------------------
 
@@ -119,6 +173,48 @@ def test_successful_call_returns_content(monkeypatch, tmp_path):
     rows = calllog.read(tmp_path / "c.jsonl")
     assert rows[0]["thinking_chars"] == 0
     assert rows[0]["prompt_tokens"] == 5
+
+
+def test_an_http_refusal_is_logged_and_charged(monkeypatch, tmp_path):
+    """`_post` raises RuntimeError for 400/401/429. Those used to escape before
+    the log and before the budget, so a misconfigured backend was invisible in
+    calls.jsonl and free against --max-calls."""
+    from nanoloop import budget as budget_mod
+    from nanoloop import calllog
+
+    monkeypatch.setattr(calllog, "LOG_PATH", tmp_path / "c.jsonl")
+    monkeypatch.setattr(model_ollama, "BACKEND", "ollama")
+
+    def refuse(*a, **k):
+        raise RuntimeError("HTTP 400 from http://x/api/chat: model not found")
+
+    monkeypatch.setattr(model_ollama, "_call_native", refuse)
+    budget_mod.set_active(budget_mod.Budget(max_calls=5).reset())
+    try:
+        with pytest.raises(RuntimeError, match="HTTP 400"):
+            model_ollama.chat("s", "u", phase="build")
+        rows = calllog.read(tmp_path / "c.jsonl")
+        assert len(rows) == 1
+        assert "HTTP 400" in rows[0]["error"]
+        assert rows[0]["error"].count("RuntimeError") == 0  # not double-wrapped
+        assert budget_mod.active().calls == 1
+    finally:
+        budget_mod.set_active(None)
+
+
+def test_a_transport_error_is_still_logged(monkeypatch, tmp_path):
+    from nanoloop import calllog
+
+    monkeypatch.setattr(calllog, "LOG_PATH", tmp_path / "c.jsonl")
+    monkeypatch.setattr(model_ollama, "BACKEND", "ollama")
+
+    def down(*a, **k):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(model_ollama, "_call_native", down)
+    with pytest.raises(RuntimeError):
+        model_ollama.chat("s", "u", phase="build")
+    assert "OSError" in calllog.read(tmp_path / "c.jsonl")[0]["error"]
 
 
 # --- aistudio backend (measurement oracle) ----------------------------------

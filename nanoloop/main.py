@@ -112,8 +112,9 @@ def cmd_run(args) -> int:
     workspace = Path(args.workspace).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
 
-    session = Session.create(args.goal) if hasattr(Session, "create") else None
+    session = Session.create(args.goal)
     tools.set_session(session)
+    tools.set_workdir(workspace)  # keep the tools' root and --workspace the same
     if args.interactive:
         os.environ["HARNESS_HITL"] = "1"
 
@@ -189,14 +190,18 @@ def cmd_run(args) -> int:
             approved["ok"] = not verdict.startswith("REJECTED")
         return plan
 
-    def _propose(step, ctx_text, feedback, temperature):
+    def _propose(step, ctx_text, feedback, temperature, *, step_index=None, attempt=None):
         text = ctx_text if not catalog else f"{ctx_text}\n\n# Available skills\n{catalog}"
+        # step_index/attempt are pure telemetry, and the only path that carries
+        # them into calls.jsonl — without them eval/report.py cannot say which
+        # step a call belonged to or how deep the repair went.
+        where = {"step_index": step_index, "attempt": attempt}
         # Two different jobs, two different prompts: copying an anchor out of an
         # existing file, versus writing a file from nothing. Sharing one prompt
         # for both is what produced 0/4 valid new files.
         if not (workspace / step.target_file).exists():
-            return propose_new_file(step, text, feedback, temperature)
-        return propose(step, text, feedback, temperature)
+            return propose_new_file(step, text, feedback, temperature, **where)
+        return propose(step, text, feedback, temperature, **where)
 
     def _on_step(i, res):
         status = "ok" if res.ok else "FAILED"
@@ -215,18 +220,26 @@ def cmd_run(args) -> int:
             f"(lower is better); each step spends {args.n_candidates} call(s)"
         )
 
-    result = crew.run_goal(
-        args.goal,
-        workspace,
-        _plan_fn,
-        _propose,
-        gates=None if not args.no_gates else [],
-        max_replans=args.max_replans,
-        snapshot=snap,
-        on_step=_on_step,
-        n_candidates=args.n_candidates,
-        scorer=scorer,
-    )
+    # The budget is process-global (see budget.py), so it has to be cleared on
+    # EVERY exit from the work — not just the happy one. `harvest --run` calls
+    # this function once per task in a loop: a rejected plan gate returning
+    # early, or anything raising, used to leave the finished task's budget
+    # active, and the next task started already partly spent.
+    try:
+        result = crew.run_goal(
+            args.goal,
+            workspace,
+            _plan_fn,
+            _propose,
+            gates=None if not args.no_gates else [],
+            max_replans=args.max_replans,
+            snapshot=snap,
+            on_step=_on_step,
+            n_candidates=args.n_candidates,
+            scorer=scorer,
+        )
+    finally:
+        budget_mod.set_active(None)
 
     if not approved["ok"]:
         return 2
@@ -261,7 +274,6 @@ def cmd_run(args) -> int:
         f"{sum(r.model_calls for r in result.steps)} model calls"
         f" | budget: {task_budget.summary()}"
     )
-    budget_mod.set_active(None)
 
     from . import failmem
 
@@ -283,11 +295,27 @@ def cmd_harvest(args) -> int:
     from . import harvest as hv
 
     con = _console()
+    problems: list[tuple[str, str]] = []
     tasks = hv.harvest(
-        args.workspace, args.sources.split(",") if args.sources else None, args.tests
+        args.workspace,
+        args.sources.split(",") if args.sources else None,
+        args.tests,
+        on_problem=lambda source, reason: problems.append((source, reason)),
     )
 
+    # Before the verdict, never after: a source that could not run is not a
+    # source that found nothing, and printing "all green" over it is how a
+    # harvest reports a repo it never actually inspected.
+    for source, reason in problems:
+        con.print(f"[harvest] {source}: COULD NOT RUN — {reason}")
+
     if not tasks:
+        if problems:
+            con.print(
+                f"[harvest] no tasks, but {len(problems)} source(s) could not run. "
+                f"This is NOT a green repo — it is a repo that was not fully checked."
+            )
+            return 5
         con.print("[harvest] nothing to do — the repo's signals are all green")
         return 0
 

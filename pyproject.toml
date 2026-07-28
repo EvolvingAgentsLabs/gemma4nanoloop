@@ -32,6 +32,14 @@ dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.mypy]
+# Skills ship one `execute.py` each and are loaded BY PATH
+# (skills.execute -> importlib.util.spec_from_file_location), never imported as
+# modules. mypy does not know that: it saw two files both named `execute` and
+# exited 2 with "Duplicate module named", checking nothing at all. Found by
+# running `nanoloop harvest` against this repo.
+exclude = "^(Skills|examples|eval/fixture-repo)/"
+
 [project.scripts]
 gemma4nanoloop = "nanoloop.main:cli"
 

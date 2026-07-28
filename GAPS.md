@@ -4,7 +4,7 @@ Measured analysis, not speculation. Every gap carries the evidence that
 demonstrates it and what closing it would cost. Ordered by what will hurt first.
 
 Context: the loop **works** — plan → steps → gates → verification → replan,
-275 tests, real tasks solved end to end. What follows is what separates
+305 tests, real tasks solved end to end. What follows is what separates
 "reliably solves toy tasks" from "I can hand it a real one".
 
 ---

@@ -139,3 +139,75 @@ def test_a_retry_handler_for_transient_errors_does_not_swallow_it():
 
     with pytest.raises(BudgetExhausted):
         retrying()
+
+
+# --- the active budget must not survive the task that owned it ---------------
+
+
+def _cmd_run_args(tmp_path, **over):
+    import argparse
+
+    base = dict(
+        goal="g",
+        workspace=str(tmp_path),
+        interactive=False,
+        no_gates=True,
+        snapshot="copy",
+        n_candidates=1,
+        max_replans=0,
+        accept="",
+        skip_preflight=True,
+        max_calls=5,
+        max_seconds=0.0,
+        max_tokens=0,
+        optimize="",
+    )
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
+def _isolate(monkeypatch, tmp_path):
+    """Keep a cmd_run under test out of the developer's own repo."""
+    from nanoloop import calllog, failmem, session
+
+    monkeypatch.setattr(session, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(failmem, "MEM_PATH", tmp_path / "attempts.jsonl")
+    monkeypatch.setattr(calllog, "LOG_PATH", tmp_path / "calls.jsonl")
+
+
+def test_the_active_budget_is_cleared_when_the_task_finishes(monkeypatch, tmp_path):
+    from nanoloop import crew, main
+
+    _isolate(monkeypatch, tmp_path)
+    (tmp_path / "m.py").write_text("X = 1\n")
+    monkeypatch.setattr(
+        main,
+        "propose_plan",
+        lambda goal, rmap, **kw: crew.Plan(
+            steps=[crew.Step(title="t", target_file="m.py", intent="i")], acceptance=[]
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "propose",
+        lambda step, ctx, fb, temp: crew.Edit(path="m.py", anchor="X = 1", replacement="X = 2"),
+    )
+
+    main.cmd_run(_cmd_run_args(tmp_path))
+    assert budget_mod.active() is None
+
+
+def test_the_active_budget_is_cleared_when_the_task_raises(monkeypatch, tmp_path):
+    """`harvest --run` calls cmd_run once per task. A budget left active leaks
+    into the next task, which then starts already partly spent."""
+    from nanoloop import crew, main
+
+    _isolate(monkeypatch, tmp_path)
+
+    def explode(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(crew, "run_goal", explode)
+    with pytest.raises(KeyboardInterrupt):
+        main.cmd_run(_cmd_run_args(tmp_path))
+    assert budget_mod.active() is None

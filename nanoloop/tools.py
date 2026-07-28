@@ -9,7 +9,6 @@ reimplement policy — they trust the sandbox boundary.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -44,6 +43,20 @@ def _hitl_enabled() -> bool:
 # Workspace root — all file/shell actions confined here. Defaults to ./workspace
 # under the current dir. Absolute paths from the model are remapped inside it.
 WORKDIR = Path(os.environ.get("HARNESS_WORKDIR", "./workspace")).resolve()
+
+
+def set_workdir(path: Path | str) -> None:
+    """Point the tools at the workspace the crew is actually working in.
+
+    Read from the environment at import time and never updated, WORKDIR had no
+    relationship to `--workspace`: a skill run through `use_skill` would have
+    executed against `./workspace` while every other part of the run edited the
+    real target. Nothing binds these tools today (see crew.PHASE_TOOLS), so this
+    was latent rather than broken — but a divergence like that is not something
+    to leave armed. `main.run` calls this with the resolved workspace.
+    """
+    global WORKDIR
+    WORKDIR = Path(path).resolve()
 
 
 def _resolve(path: str) -> Path:
@@ -222,13 +235,10 @@ def use_skill(name: str, data: str = "") -> str:
         avail = ", ".join(sk.name for sk in skills.discover()) or "none"
         return f"[no skill '{name}'] available: {avail}"
 
-    params: dict = {}
-    if data:
-        try:
-            parsed = json.loads(data)
-            params = parsed if isinstance(parsed, dict) else {"value": parsed}
-        except json.JSONDecodeError:
-            params = {"value": data}
+    try:
+        params = skills.parse_params(data)
+    except ValueError as e:
+        return f"[skill '{name}' failed] {e}"
 
     # Deterministic executor if the skill ships one; otherwise the instructions.
     # Copy Google's PATTERN (declarative skill + deterministic executor), not

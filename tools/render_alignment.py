@@ -63,7 +63,7 @@ def render(out: Path) -> None:
     d = ImageDraw.Draw(img)
 
     d.text((pad, 42), "eyeless (fruit fly)  vs  PAX6 (human)", font=f_title, fill=TITLE)
-    mismatches = sum(1 for a, b in zip(fly, human) if a != b)
+    mismatches = sum(1 for a, b in zip(fly, human, strict=True) if a != b)
     d.text(
         (pad, 84),
         f"{WIDTH - mismatches} of {WIDTH} identical — "
@@ -76,7 +76,7 @@ def render(out: Path) -> None:
     d.text((pad, y), "fly", font=f_label, fill=LABEL)
     d.text((pad, y + 76), "human", font=f_label, fill=LABEL)
 
-    for i, (a, b) in enumerate(zip(fly, human)):
+    for i, (a, b) in enumerate(zip(fly, human, strict=True)):
         cx = x + i * cw
         same = a == b
         d.text((cx, y), a, font=f_mono, fill=FLY if same else MISMATCH)

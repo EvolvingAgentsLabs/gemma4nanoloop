@@ -20,7 +20,8 @@ def _repo(tmp_path, *, broken=True):
         '"""T."""\n\nfrom pkg.calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n'
     )
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "t"\nversion = "0.1.0"\n\n[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
+        '[project]\nname = "t"\nversion = "0.1.0"\n\n'
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
     )
     return tmp_path
 
