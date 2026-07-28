@@ -36,3 +36,35 @@ def test_symbol_list_is_capped(tmp_path):
 def test_syntax_error_does_not_break_the_map(tmp_path):
     (tmp_path / "broken.py").write_text("def (((:\n")
     assert "broken.py" in repomap.build(tmp_path)
+
+
+def test_skipped_directories_are_never_walked(tmp_path):
+    """`rglob("*")` enumerated and sorted the whole tree before dropping
+    SKIP_DIRS, so a repo with a virtualenv paid for every file in it on every
+    planning round. Pruning has to happen during the walk, not after."""
+    (tmp_path / "keep.py").write_text("A = 1\n")
+    for skipped in (".venv", "node_modules", "__pycache__"):
+        deep = tmp_path / skipped / "a" / "b"
+        deep.mkdir(parents=True)
+        (deep / "buried.py").write_text("B = 1\n")
+
+    found = repomap._files(tmp_path)
+    assert [p.name for p in found] == ["keep.py"]
+    assert "buried" not in repomap.build(tmp_path)
+
+
+def test_a_file_is_read_once_per_map(tmp_path, monkeypatch):
+    """The docstring and the symbol list came from two separate read+parse
+    passes over the same file."""
+    (tmp_path / "m.py").write_text('"""doc."""\n\n\ndef f():\n    pass\n')
+    reads = []
+    original = repomap.Path.read_text
+
+    def counting(self, *a, **kw):
+        reads.append(str(self))
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(repomap.Path, "read_text", counting)
+    out = repomap.build(tmp_path)
+    assert "doc." in out and "defines: f" in out
+    assert len([r for r in reads if r.endswith("m.py")]) == 1
