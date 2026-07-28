@@ -83,6 +83,19 @@ class GitSnapshot:
 
     Only for workspaces that are their own git repo and that nothing else is
     touching concurrently.
+
+    SAVE MUST NOT MUTATE THE TREE. `git stash push` on its own reverts the
+    working tree to HEAD, which is a different operation from what CopySnapshot
+    does and silently destroys work: by the time step 2 called save(), step 1's
+    edit — committed nowhere, since the crew only commits at delivery time — was
+    in the stash and gone from the tree. A three-step plan finished with only the
+    last step applied, and nothing in the run reported a problem because every
+    gate had passed at the time it ran.
+
+    So save() stashes and immediately applies the stash back. The tree is
+    unchanged, and a copy of it lives in the stash for restore() to return to.
+    The two snapshots then mean the same thing, which is the only way `--snapshot
+    git` can be a drop-in for the default.
     """
 
     def __init__(self, workspace: Path | str):
@@ -95,10 +108,17 @@ class GitSnapshot:
         )
 
     def save(self) -> None:
+        # Drop any earlier snapshot first, exactly as CopySnapshot does. Without
+        # it a run leaves one stash entry per step behind on the user's repo.
+        self.discard()
         # -u so untracked files are captured: a step's first act is often to
         # create a file, and a stash without -u would leave it behind on restore.
         r = self._git("stash", "push", "-u", "-m", "nanoloop-candidate")
         self._stashed = r.returncode == 0 and "No local changes" not in (r.stdout or "")
+        if self._stashed:
+            # Put the working tree back the way we found it. `apply` (not `pop`)
+            # keeps the entry, which is what restore() returns to.
+            self._git("stash", "apply", "--quiet")
 
     def restore(self) -> None:
         self._git("checkout", "--", ".")
@@ -111,6 +131,14 @@ class GitSnapshot:
         if self._stashed:
             self._git("stash", "drop")
             self._stashed = False
+
+    def __enter__(self):
+        self.save()
+        return self
+
+    def __exit__(self, *exc):
+        self.discard()
+        return False
 
 
 def make(workspace: Path | str, kind: str = "copy"):
