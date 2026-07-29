@@ -38,19 +38,43 @@ tests is a claim, not an oracle.
 
 ## Reliability, per model
 
-| model | result |
-|---|---|
-| `gemma-4-26b-a4b-it` (cloud) | solved: 2/2 steps, 3 model calls, 26 s |
-| `gemma4:12b` (local) | **2 of 3 runs** solved; the third exhausted its budget with the circuit untouched |
+| model | when | result |
+|---|---|---|
+| `gemma-4-26b-a4b-it` (cloud) | old criterion | solved: 2/2 steps, 3 model calls, 26 s |
+| `gemma4:12b` (local) | old criterion | **2 of 3 runs** solved |
+| `gemma4:12b` (local) | **current criterion, re-measured** | **0 of 3 runs** solved |
+
+The re-measurement is the honest part, and it does not say what it looks like it
+says.
+
+All three failures are identical: the budget ran out at `max_calls=12` after
+~320 s with the **circuit untouched** — still three `cx`, still seven gates.
+That failure mode fails the *old* criterion too (`cx <= 1` rejects three CNOTs
+just as firmly), so **the stricter check is not what caused it**. Whatever
+changed, it is not the oracle.
+
+What did change is not established here. Candidates, none of them isolated:
+run-to-run variance at n=3 on both sides; the machine's thermal state, which
+this project has already measured moving p50 from 17.5 s to 29.8 s after a day
+of sustained load; or the conditions of the original measurement, which are no
+longer reproducible.
+
+Two things are worth taking away regardless. **The 12B is unreliable on this
+task** — that was the original claim and three more failures do not weaken it.
+And a table of pass rates is a measurement, not a property: this one sat in the
+README for months and was re-run once, at which point it stopped agreeing with
+itself. See trap 9 in `NEXT-STEPS.md`.
+
+When it does land, the result is exactly the 26B's, and it satisfies the current
+criterion as well as the old one:
 
 ```
-cx: 3 -> 1     x: 2 -> 0     depth: 6 -> 3     unitary identical
+cx: 3 -> 1     x: 2 -> 0     depth: 6 -> 3     unitary identical     3 gates
 ```
 
-The 12B is **inconsistent** on this task. When it lands, the result is exactly
-the 26B's; when it does not, it spends the budget without touching anything and
-reports failure, which is the correct behaviour. If you are going to depend on
-this, raise `--n-candidates` or run the larger model.
+When it does not, it spends the budget without touching anything and reports
+failure, which is the correct behaviour — every run above ended that way. If you
+are going to depend on this, raise `--n-candidates` or run the larger model.
 
 A bug surfaced while measuring precisely this: one run **achieved the goal** —
 criterion met, tests green, circuit reduced — and still exited 1, because a
