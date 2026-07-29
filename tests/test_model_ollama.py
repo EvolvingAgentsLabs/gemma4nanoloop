@@ -59,10 +59,13 @@ def test_probe_reports_a_bad_model_instead_of_raising(monkeypatch):
     assert "not a Gemma 4 model" in out["error"]
 
 
-def test_the_embedder_stays_in_the_gemma_family():
-    from nanoloop import recall
-
-    assert "gemma" in recall.EMBED_MODEL.lower()
+def test_the_family_check_can_be_relaxed_to_gemma_without_the_4():
+    """`GEMMA_RE` exists for a caller that needs the family but not the
+    generation. Its one consumer (the EmbeddingGemma recall path) is gone, so
+    what is pinned here is the mechanism, not a live use of it: a Gemma of any
+    generation passes, anything outside the family still does not."""
+    for name in ("embeddinggemma", "gemma3:12b", "gemma4:12b"):
+        assert model_ollama.check_model(name, family=model_ollama.GEMMA_RE, what="Gemma") == name
     with pytest.raises(model_ollama.UnsupportedModel):
         model_ollama.check_model("nomic-embed-text", family=model_ollama.GEMMA_RE, what="Gemma")
 

@@ -8,7 +8,8 @@
 # Keep the 12B resident. Reloading 7.6 GB between phases dominates wall clock.
 export OLLAMA_KEEP_ALIVE=-1
 
-# Exactly two: gemma4:12b (7.6 GB) + embeddinggemma (~0.3 GB) = ~7.9 GB.
+# One model: gemma4:12b (7.6 GB). The cap is kept above 1 anyway, because
+# the failure below is about what gets loaded ALONGSIDE it.
 #
 # WARNING: this cap does NOT protect the memory budget. `gemma4:e4b` is 9.6 GB;
 # if anything requests it, Ollama will happily load it ALONGSIDE the 12B and

@@ -58,15 +58,14 @@ could report success while the work was not done:
 uv venv --python 3.12 && uv pip install -e ".[dev]"
 source ./env.sh            # Ollama config; restart `ollama serve` after
 ollama pull gemma4:12b
-ollama pull embeddinggemma # for semantic recall (Phase 6)
 ```
 
 **Gemma 4 is the only family this runs**, and it is enforced rather than
 documented: `model_ollama.check_model()` refuses any model outside it, including
 one set through `NANOLOOP_MODEL`. The `aistudio` backend uses a Google endpoint
 but serves `gemma-4-26b-a4b-it` on it — no Gemini model is used anywhere here.
-The one exception is embeddings, where there is no Gemma 4 model: `recall.py`
-requires the Gemma family and gets EmbeddingGemma.
+`check_model()` can be relaxed to the Gemma family without the generation —
+there is no Gemma 4 embedder — but nothing needs that today.
 
 ## Use
 
@@ -201,7 +200,6 @@ the three things I tried."
 ```bash
 python -m eval.run_anchors --fixtures eval/anchors.jsonl   # Phase 2 viability gate
 python -m eval.run_plans                                   # Phase 1
-python -m eval.run_recall --reindex                        # Phase 6
 python -m eval.report --log calls.jsonl                    # all runtime metrics
 ```
 
@@ -220,7 +218,6 @@ nanoloop/
   model_ollama.py   client for Ollama (native), LiteRT-LM and AI Studio
   calllog.py        append-only JSONL call log
   snapshot.py       clean tree per candidate (D8)
-  recall.py         EmbeddingGemma semantic recall over ./Memory
   repomap.py        file tree + docstring + defined symbols per file
   harvest.py        tasks read off failing pytest/mypy/ruff, oracle attached
   deliver.py        branch + commit per task + report generated from the log
@@ -228,7 +225,7 @@ nanoloop/
   failmem.py        what failed before, superseded by any later success
 Skills/             scaffold-fastapi, add-endpoint, setup-pytest
 examples/           quantum-circuit-opt (oracles), quantum-evolve (scored search)
-  session.py memory.py skills.py frontmatter.py tools.py    (from nanoLoop)
+  session.py skills.py frontmatter.py tools.py              (from nanoLoop)
 eval/               fixtures, measurement harnesses, fixture-repo
 ```
 
@@ -247,8 +244,7 @@ below was measured against a live model, not reasoned about.
 | edit a 22 KB file (symbol past the old window) | 1 step, 1 call, 0 repairs |
 | replan after an unmet criterion | 2 rounds, criterion satisfied |
 | **harvest: fix a failing test unsupervised** | **1/1 solved, 1 model call** — no goal or criteria written by hand |
-| semantic recall@1 vs keyword | **0.850 vs 0.000** (recall@5 saturates 1.0/1.0) |
-| quantum circuit optimisation | 10 → 3 gates (26B); 9 → 7 (12B) — see Examples |
+| quantum circuit optimisation | 10 → 3 gates (26B); the 12B is unreliable — see Examples |
 | latency per call | ~30 s local (12B) / ~4 s cloud (26B) |
 | reasoning tokens per call | **0** — see below |
 

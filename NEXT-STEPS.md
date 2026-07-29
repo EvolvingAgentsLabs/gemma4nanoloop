@@ -122,10 +122,25 @@ that disagreed about invalid JSON; `tools.WORKDIR` follows `--workspace` instead
 of a stale import-time env read; `_read_slice` grows its window in linear time;
 `.env.example` is no longer swallowed by `.gitignore`.
 
-Deliberately NOT done: `recall.py` and `memory.py` (~400 lines) are reachable
-only from `eval/run_recall.py` and from tools nothing binds, and most of
-`session.py` has no live writer. That is a product decision about Phase 6 and
-resume, not a code fix — flagged, left alone.
+### Phase 6 and the resume API were deleted, not fixed
+
+`recall.py`, `memory.py`, their tests and `eval/run_recall.py` are gone — **680
+lines**. They were reachable only from that eval script and from three tools
+(`remember`, `recall`, `memory_links`) that nothing binds, so the semantic
+recall PLAN.md specifies as Phase 6 was never part of the loop. It was measured
+once (recall@1 0.850 vs 0.000 keyword) and then sat there.
+
+Most of `session.py` went with it: `load()`, `list_all()`, `context_brief()` and
+the transcript, all fork inheritance for a resume path nothing ever built
+(G8) — along with the tests that covered them, which is the point. **A green
+test over an API no caller uses is the most comfortable kind of dead code: it
+looks like coverage.** What remains is what the crew writes: the goal, the task
+log, and the audit trail of human decisions.
+
+PLAN.md and IMPLEMENTATION.md still describe Phase 6, and are left as they are:
+they record what was planned and measured at the time, and rewriting them would
+destroy the only account of why it existed. If semantic recall comes back, it
+comes back deliberately and wired into the loop rather than beside it.
 
 ### Then the three examples were audited, and all three oracles were wrong
 
@@ -184,8 +199,8 @@ already draws the curve. Soft signal already seen: p50 went from 17.5 s to
 
 ~3,260 tokens on this repo, grows linearly, `max_files=300` then truncates. The
 planner does not need the whole repo, it needs what is relevant to the goal.
-Lexical matching is enough to start; `recall.py` already has EmbeddingGemma if
-more is needed.
+Lexical matching is enough to start; the EmbeddingGemma index that used to sit
+in `recall.py` was removed as dead code and would have to come back on purpose.
 
 ### 4. G6 — cross-file awareness 🟡 structural
 
@@ -203,10 +218,10 @@ version: warn when a goal touches a symbol referenced elsewhere, using the
   only.
 - **`num_ctx` never truly verified** against the server logs; the `verify-ctx`
   command exists, the log check was never done.
-- **30 recall queries** (today 10) against a larger corpus. The current one I
-  wrote myself, so query and document share an author, which flatters it.
 - **The crew cannot install dependencies**, and `DEFAULT_GATES` is hardwired to
   Python.
+- ~~30 recall queries against a larger corpus~~ — moot: Phase 6 was deleted
+  rather than extended. See above.
 
 ---
 

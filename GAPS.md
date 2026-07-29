@@ -192,8 +192,8 @@ does not need to see the whole repo, it needs to see **what is relevant to the
 goal**.
 
 **What I would do:** filter the map by relevance to the goal before sending it
-(lexical matching is enough to start; `recall.py` already has EmbeddingGemma if
-something better is needed). Note that the symbol index we added is what makes
+(lexical matching is enough to start; a semantic index was removed as dead
+code and would have to come back deliberately). Note that the symbol index we added is what makes
 the map useful at all — without it the planner was sending edits to
 `__init__.py`.
 
