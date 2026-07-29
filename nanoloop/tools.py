@@ -16,7 +16,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from . import memory, skills
+from . import skills
 from .session import Session
 
 # Active session for this process. Set by main.run(); tools read/write it so the
@@ -173,49 +173,6 @@ def track_task(title: str, status: str = "pending", note: str = "") -> str:
     return f"[task {t.id}] {t.status}: {t.title}"
 
 
-@tool
-def remember(name: str, description: str, content: str, type: str = "reference") -> str:
-    """Save a durable fact to the Markdown knowledge-graph memory (./Memory).
-
-    Use for facts worth keeping across sessions: user preferences, project
-    constraints, decisions, external references. Link related notes inside
-    `content` with [[other-note-name]] to build the graph.
-      name:        short kebab-case slug (the note's id).
-      description: one-line summary used later for recall.
-      type:        user | feedback | project | reference.
-    """
-    n = memory.write(name, description, content, type)
-    links = f" → links: {', '.join(n.links)}" if n.links else ""
-    return f"[remembered {n.name} ({n.type})]{links}"
-
-
-@tool
-def recall(query: str, limit: int = 5) -> str:
-    """Search memory for relevant facts (knowledge-graph notes).
-
-    Returns matching notes (name, type, description, body) ranked by relevance.
-    Call this before planning so prior preferences/constraints inform the work.
-    """
-    notes = memory.search(query, limit)
-    if not notes:
-        return "[no matching memory]"
-    out = []
-    for n in notes:
-        out.append(f"## {n.name} ({n.type})\n{n.description}\n{n.body}".strip())
-    return "\n\n".join(out)
-
-
-@tool
-def memory_links(name: str) -> str:
-    """Show a note's knowledge-graph neighbors (inbound + outbound [[links]])."""
-    nb = memory.neighbors(name)
-    return (
-        f"{memory.slugify(name)}\n"
-        f"  outbound: {', '.join(nb['outbound']) or '—'}\n"
-        f"  inbound:  {', '.join(nb['inbound']) or '—'}"
-    )
-
-
 # `list_skills` deliberately does not exist (PLAN.md D5 corollary).
 # nanoLoop injected the catalog into the system prompt AND exposed list_skills as
 # a tool. The model already has the catalog; the tool was a wasted slot and a
@@ -257,8 +214,5 @@ HARNESS_TOOLS = [
     write_file,
     human_review,
     track_task,
-    remember,
-    recall,
-    memory_links,
     use_skill,
 ]

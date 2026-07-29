@@ -72,10 +72,25 @@ model cannot do a task, rule out that the prompt cannot.
 
 Run end to end with `run --optimize` against both backends:
 
-| model | result | optimum |
-|---|---|---|
-| `gemma-4-26b` (cloud) | **10 → 3** gates, matching the transpiler | 3 |
-| `gemma4:12b` (local) | **10 → 7** gates, then plateaus | 3 |
+| model | when | result | optimum |
+|---|---|---|---|
+| `gemma-4-26b` (cloud) | old metric (gate count) | **10 → 3** gates, matching the transpiler | 3 |
+| `gemma4:12b` (local) | old metric (gate count) | **10 → 7** gates, then plateaus | 3 |
+| `gemma4:12b` (local) | **cost, re-measured** | **0 of 4 candidates valid**, cost 37 → 37 | 12 |
+
+The last row is today, 2 generations × 2 candidates, 53 s. Every candidate came
+back `unitary changed` — worse than the plateau the row above describes, which
+at least produced correct-but-incomplete circuits.
+
+Same caveat as the sibling example, and for the same reason (trap 9 in
+`NEXT-STEPS.md`): the metric changed underneath these numbers, so the first two
+rows are in gate count and the third in cost, and they are not directly
+comparable. What is comparable is the verdict — **matched** vs **did not
+match** — and on that the ordering is unchanged.
+
+The machinery, at least, does what it should: the run printed
+`nothing beat the starting circuit; best.py left untouched`, which is the guard
+that stops a failed run from overwriting the committed result.
 
 The 12B removed the redundant `h` gates and left `cx x3` and `x x2` untouched.
 Correct — the unitary is preserved — but incomplete. Run twice more, no
