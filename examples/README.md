@@ -11,8 +11,8 @@ where that claim can actually be tested, because the signal is exact.
 | example | the oracle | what it shows |
 |---|---|---|
 | [`bioinformatics-eyeless`](bioinformatics-eyeless/) | a conserved domain, plus a shuffled null that says no | the discovery itself, and its significance measured rather than asserted |
-| [`quantum-circuit-opt`](quantum-circuit-opt/) | unitary equivalence, mathematically exact | acceptance criteria a stub cannot satisfy |
-| [`quantum-evolve`](quantum-evolve/) | equivalence as a gate, gate count as a gradient | scored search — now in the crew as `run --optimize` |
+| [`quantum-circuit-opt`](quantum-circuit-opt/) | unitary equivalence, mathematically exact | acceptance criteria neither a stub nor a bloated circuit can satisfy |
+| [`quantum-evolve`](quantum-evolve/) | equivalence as a gate, arity-weighted cost as a gradient | scored search — now in the crew as `run --optimize` |
 
 ---
 

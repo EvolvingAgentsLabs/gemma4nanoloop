@@ -127,6 +127,38 @@ only from `eval/run_recall.py` and from tools nothing binds, and most of
 `session.py` has no live writer. That is a product decision about Phase 6 and
 resume, not a code fix — flagged, left alone.
 
+### Then the three examples were audited, and all three oracles were wrong
+
+Not wrong by carelessness. **All three measured something adjacent to what they
+claimed to measure**, which is why every one of them had looked fine for months.
+
+- **bioinformatics** reported the homeodomain at **60%** identity. It is 90%.
+  `conserved_blocks` returns the ungapped segments of one Smith–Waterman
+  alignment; BLAST reports HSPs, which are separate local alignments. Treating
+  them as the same glued the domain to flanks at 46% and 35% and printed the
+  average. The book's own figure (80 aa at 85%) agrees with 90%, not 60%. A
+  third row labelled "linker, far freer to mutate" at 19% turned out to be
+  *below the noise floor* — 68 of 74 blocks from shuffled PAX6 beat it.
+- **quantum-circuit-opt** called `criteria.json` the project's best criterion.
+  Its improvement half counted two gate **names**, so a 23-gate circuit padded
+  with cancelling `y` pairs passed it. Now counted by arity and total size, with
+  `tests/test_criterion.py` executing the shipped criterion against the circuits
+  that used to cheat it.
+- **quantum-evolve**'s scorer justified not checking correctness because "the
+  gates already refuse anything that changes the unitary". That directory had no
+  tests and no `pyproject.toml`. Its optimum, unopposed, is an empty circuit —
+  cost 0, measured. What prevented disaster was preflight refusing to start, by
+  accident rather than design.
+
+Plus two things that damage state rather than report it: `evolve.py` wrote
+`best.py` unconditionally from `target.py`'s contents, so a run that improved
+nothing replaced the committed 3-gate result with the 10-gate original; and it
+`exec`'d candidates in-process with no timeout, so a generated `while True:`
+hung the run forever.
+
+Example tests: 2 → 16 (bio), 2 → 7 (circuit-opt), 0 → 7 (evolve). All three
+directories now pass preflight; `quantum-evolve` did not.
+
 ---
 
 ## What is genuinely left
@@ -205,10 +237,27 @@ version: warn when a goal touches a symbol referenced elsewhere, using the
    Six tests covered the first, one covered `make()` returning the second's
    type, and the difference cost committed-nowhere work. Parametrize.
 
+9. **An oracle is not only something to test — it is something whose change
+   expires every measurement made with it.** The quantum criterion counted gate
+   *names* (`cx <= 1`, `x == 0`), so a 23-gate circuit padded with cancelling
+   `y` pairs passed the check that was supposed to prove improvement. Fixing it
+   to count by arity and total size was the easy half. The half that is easy to
+   forget: the "2 of 3 runs solved" table two sections below in that README had
+   been measured against the *old* check, and nothing in the repo marked it as
+   stale. A stricter oracle cannot make old numbers better, only worse — so an
+   unmarked table silently becomes optimistic. When you tighten a criterion,
+   find everything it ever certified and either re-measure it or label it.
+
 The pattern behind most of these: **a mechanism that appears to run while being
-incapable of doing its job.** It has now recurred six times — the newest being
-`step_index`, a field written on every call record and never once populated.
-Suspect it first.
+incapable of doing its job.** It has now recurred seven times — `step_index`, a
+field written on every call record and never once populated; and `from_mypy`,
+which reported a repo green over a type checker that had exited 2 without
+checking anything. Suspect it first.
+
+And its mirror image, which trap 9 is about: **a mechanism that did its job
+once, under conditions that have since changed.** The first kind is caught by
+asking "can this ever fail?". The second only by asking "what did this certify,
+and is that still true?".
 
 ---
 
