@@ -38,43 +38,80 @@ tests is a claim, not an oracle.
 
 ## Reliability, per model
 
-| model | when | result |
+| model | criterion | result |
 |---|---|---|
-| `gemma-4-26b-a4b-it` (cloud) | old criterion | solved: 2/2 steps, 3 model calls, 26 s |
-| `gemma4:12b` (local) | old criterion | **2 of 3 runs** solved |
-| `gemma4:12b` (local) | **current criterion, re-measured** | **0 of 3 runs** solved |
+| `gemma-4-26b-a4b-it` (cloud) | old (gate names) | solved: 2/2 steps, 3 model calls, 26 s |
+| `gemma4:12b` (local) | old (gate names) | **2 of 3** runs solved |
+| `gemma4:12b` (local) | **current (cost)** | **3 of 3** runs solved — 1 step, 2 model calls, ~134 s each |
 
-The re-measurement is the honest part, and it does not say what it looks like it
-says.
+The last row is the honest one to cite: it is today's code against today's
+criterion, and the tighter check did not cost the 12B anything. Five of six runs
+across both measurements. That is a small sample and it is not a reliability
+claim — but "the 12B is inconsistent on this task" now rests on a single old
+failure whose conditions are no longer reproducible, and should be read that way.
 
-All three failures are identical: the budget ran out at `max_calls=12` after
-~320 s with the **circuit untouched** — still three `cx`, still seven gates.
-That failure mode fails the *old* criterion too (`cx <= 1` rejects three CNOTs
-just as firmly), so **the stricter check is not what caused it**. Whatever
-changed, it is not the oracle.
+### The re-measurement that measured a bug in its own harness
 
-What did change is not established here. Candidates, none of them isolated:
-run-to-run variance at n=3 on both sides; the machine's thermal state, which
-this project has already measured moving p50 from 17.5 s to 29.8 s after a day
-of sustained load; or the conditions of the original measurement, which are no
-longer reproducible.
+Worth recording, because it very nearly went into this table as a fact about the
+model. Tightening the criterion above meant re-running these numbers, and the
+first attempt came back **0 of 3**, every run exhausting its budget with the
+circuit untouched.
 
-Two things are worth taking away regardless. **The 12B is unreliable on this
-task** — that was the original claim and three more failures do not weaken it.
-And a table of pass rates is a measurement, not a property: this one sat in the
-README for months and was re-run once, at which point it stopped agreeing with
-itself. See trap 9 in `NEXT-STEPS.md`.
+The tempting explanations were all wrong, and all of them were checked:
 
-When it does land, the result is exactly the 26B's, and it satisfies the current
+| hypothesis | verdict |
+|---|---|
+| thermal drift under sustained load | **no** — p50 31 s the day before, 35–38 s now |
+| stale processes contending for the model | **no** — one process |
+| the stricter criterion rejecting partial answers | **no** — the failures leave three `cx`, which the old check rejects too |
+| **the harness changed** | **yes** |
+
+The decisive experiment was the cheap one, and it should have come first:
+**check out the previous day's code and run the same task with the same model.**
+It solved it 2 out of 2, in 3 calls and ~104 s.
+
+The culprit was a test added the same day, in this directory:
+
+```python
+def test_the_original_redundant_circuit_fails():
+    with pytest.raises(AssertionError):
+        run_criterion(circuits.prepare_state())  # the LIVE function
+```
+
+It asserts that the circuit under optimisation is still bad. True while the file
+is unoptimised — and false the instant the task is done. So the gate went red on
+the correct answer, `build_step` reverted the improvement it had just verified,
+and the run spent its budget re-solving a problem it had already solved. It
+reproduces with no model at all: feed the optimal edit in by hand and the
+anchors read `['exact', 'not_found', 'not_found', 'not_found']`.
+
+**A test that asserts "the current state is bad" stops being a test the moment
+someone fixes the current state.** Both quantum examples had one; both now build
+their inputs explicitly. And both grew the check that would have caught it:
+`test_the_gates_stay_green_once_the_task_is_solved` copies the workspace, writes
+the optimal answer, and runs the suite there — because an example is only an
+example if solving it leaves the gate green.
+
+Re-run after the fix, the 12B solved it **3 times out of 3**. The model was never
+the problem being measured.
+
+And a smaller surprise from re-measuring, worth knowing before it costs an
+afternoon: **editing this README broke the workspace.** `DEFAULT_GATES` runs
+`ruff format --check .`, and ruff formats Python inside Markdown fences — so two
+spaces before a comment in the snippet above turned the example red and
+`preflight` refused to start. Prose is part of the gate here.
+
+The result is the same one the 26B reaches, and it satisfies the current
 criterion as well as the old one:
 
 ```
 cx: 3 -> 1     x: 2 -> 0     depth: 6 -> 3     unitary identical     3 gates
 ```
 
-When it does not, it spends the budget without touching anything and reports
-failure, which is the correct behaviour — every run above ended that way. If you
-are going to depend on this, raise `--n-candidates` or run the larger model.
+When a run does not land, it spends its budget without touching the circuit and
+reports failure, which is the correct behaviour — the historical 1-in-3 failure
+ended that way, and so did all three runs against the broken gate. If you are
+going to depend on this, raise `--n-candidates` or run the larger model.
 
 A bug surfaced while measuring precisely this: one run **achieved the goal** —
 criterion met, tests green, circuit reduced — and still exited 1, because a

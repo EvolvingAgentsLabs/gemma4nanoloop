@@ -16,6 +16,7 @@ criterion that was supposed to be doing the work.
 """
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -47,14 +48,84 @@ def intended() -> QuantumCircuit:
     return qc
 
 
+def redundant() -> QuantumCircuit:
+    """`circuits.py` as it SHIPS, written out here rather than imported.
+
+    This is the correction that matters, and it cost three failed runs to find.
+    The test below used to call `circuits.prepare_state()` — the very function
+    the crew is asked to optimise — and assert that it fails the criterion. True
+    while the file is unoptimised, and false the instant the task is done: the
+    test went red on the correct answer, the gate reverted the edit, and the run
+    burned its budget re-solving a problem it had already solved.
+
+    A test that asserts "the current state is bad" stops being a test the moment
+    someone fixes the current state. Freeze the input.
+    """
+    qc = QuantumCircuit(2)
+    qc.h(0)
+    qc.cx(0, 1)
+    qc.cx(0, 1)
+    qc.cx(0, 1)
+    qc.x(1)
+    qc.x(1)
+    qc.rz(0.5, 0)
+    return qc
+
+
 def test_the_intended_answer_passes():
     run_criterion(intended())
 
 
-def test_the_original_redundant_circuit_fails():
-    """It is equivalent to itself, obviously — it must fail on cost."""
+def test_a_redundant_circuit_fails():
+    """Equivalent to the reference, and three times the two-qubit cost."""
     with pytest.raises(AssertionError):
-        run_criterion(circuits.prepare_state())
+        run_criterion(redundant())
+
+
+@pytest.mark.skipif(
+    os.environ.get("NANOLOOP_META_TEST") == "1",
+    # Without this the test copies the suite it lives in and runs it, which
+    # copies it again. Found the direct way: 300 s of recursion.
+    reason="running inside its own copy of the suite",
+)
+def test_the_gates_stay_green_once_the_task_is_solved(tmp_path):
+    """The meta-test that would have caught the bug above.
+
+    The example is only an example if solving it leaves the suite green. This
+    copies the workspace, writes the optimal circuit into it, and runs the whole
+    suite there — which is exactly what the crew's gate does after an edit. If
+    any test here encodes "the circuit is still redundant", this goes red.
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    root = Path(__file__).parent.parent
+    work = tmp_path / "solved"
+    shutil.copytree(
+        root, work, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".ruff_cache")
+    )
+    (work / "circuits.py").write_text(
+        "from qiskit import QuantumCircuit\n\n\n"
+        "def prepare_state() -> QuantumCircuit:\n"
+        '    """Entangle two qubits and rotate the first."""\n'
+        "    qc = QuantumCircuit(2)\n"
+        "    qc.h(0)\n"
+        "    qc.cx(0, 1)\n"
+        "    qc.rz(0.5, 0)\n"
+        "    return qc\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q"],
+        cwd=str(work),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env={**os.environ, "NANOLOOP_META_TEST": "1"},
+    )
+    assert proc.returncode == 0, f"solving the task turns the suite red:\n{proc.stdout[-1500:]}"
 
 
 def test_a_renamed_two_qubit_gate_does_not_get_a_free_pass():

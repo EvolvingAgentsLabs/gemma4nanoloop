@@ -263,16 +263,43 @@ version: warn when a goal touches a symbol referenced elsewhere, using the
    unmarked table silently becomes optimistic. When you tighten a criterion,
    find everything it ever certified and either re-measure it or label it.
 
+10. **Never assert that live state is still bad.** A test in
+    `quantum-circuit-opt` asserted that `prepare_state()` — the function the
+    crew is asked to optimise — fails the criterion. True while the file is
+    unoptimised, false the instant the task is done. So the gate went red on the
+    correct answer, `build_step` reverted the improvement it had just verified,
+    and three runs burned their budget re-solving a solved problem. It was
+    written and its suite went green, because the suite was measured against a
+    repo nobody had fixed yet. Freeze the input; a test that pins "the current
+    state is wrong" expires the moment someone is right.
+
+    The check that catches it is cheap and now ships in both quantum examples:
+    copy the workspace, write the known answer into it, run the suite there.
+    **An example is only an example if solving it leaves the gate green.**
+
+    And the meta-lesson, which cost more than the bug: the failure was blamed on
+    the model, on thermal drift, and on the criterion, and written up as a
+    finding about the 12B, before anyone ran the one cheap experiment that
+    settles it — *check out yesterday's code and run the same task*. It solved
+    it 2 out of 2. **When something that worked stops working, bisect before
+    theorising.**
+
 The pattern behind most of these: **a mechanism that appears to run while being
 incapable of doing its job.** It has now recurred seven times — `step_index`, a
 field written on every call record and never once populated; and `from_mypy`,
 which reported a repo green over a type checker that had exited 2 without
 checking anything. Suspect it first.
 
-And its mirror image, which trap 9 is about: **a mechanism that did its job
-once, under conditions that have since changed.** The first kind is caught by
-asking "can this ever fail?". The second only by asking "what did this certify,
-and is that still true?".
+And its two mirror images, which traps 9 and 10 are about: **a mechanism that
+did its job once, under conditions that have since changed**, and **a mechanism
+that does its job exactly until someone succeeds.** Three different questions:
+
+    can this ever fail?                    -> the original pattern
+    what did this certify, is it still so? -> trap 9
+    does this go red when I get it right?  -> trap 10
+
+The third is the one that hurt most, because a suite full of green tests said
+nothing was wrong. It was measured against a repo nobody had fixed yet.
 
 ---
 
