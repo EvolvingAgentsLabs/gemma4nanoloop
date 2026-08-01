@@ -1,3 +1,9 @@
+> **FROZEN — 2026-08-01.** Not under development. This repository is kept because
+> it is still true, not because it is maintained. 
+> The organisation's active work is
+> [ai-os](https://github.com/EvolvingAgentsLabs/ai-os) — an agent-based
+> operating system. Last verified: 2026-08-01.
+
 # gemma4nanoloop
 
 ![A local model feeding a pipeline of narrowing deterministic gates](docs/img/hero.png)
