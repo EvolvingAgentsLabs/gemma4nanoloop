@@ -46,9 +46,76 @@ def test_the_committed_best_is_still_equivalent():
     assert Operator(best.build()).equiv(Operator(reference()))
 
 
-def test_the_committed_best_is_actually_better():
-    assert cost(best.build()) < cost(target.build())
-    assert best.build().size() < target.build().size()
+def unoptimised() -> QuantumCircuit:
+    """`target.py` as it SHIPS, written out here rather than imported.
+
+    Same correction as the sibling example, and the same reason. This used to
+    compare against `target.build()` — the file `run --optimize` rewrites — so
+    the assertion "best is cheaper than target" went false the moment the
+    optimisation succeeded. The gate then reverted the improvement it had just
+    verified. Freeze the input; never assert that live state is still bad.
+    """
+    qc = QuantumCircuit(2)
+    qc.h(0)
+    qc.rz(0.3, 0)
+    qc.cx(0, 1)
+    qc.rz(0.4, 0)
+    qc.cx(0, 1)
+    qc.cx(0, 1)
+    qc.x(1)
+    qc.x(1)
+    qc.h(0)
+    qc.h(0)
+    return qc
+
+
+def test_the_shipped_target_is_the_unoptimised_circuit():
+    """Pins the starting point without forbidding it from improving."""
+    assert Operator(unoptimised()).equiv(Operator(reference()))
+
+
+def test_the_committed_best_beats_the_unoptimised_circuit():
+    assert cost(best.build()) < cost(unoptimised())
+    assert best.build().size() < unoptimised().size()
+
+
+def test_optimising_target_keeps_the_suite_green(tmp_path):
+    """The meta-test. `run --optimize` edits target.py, and the gate is this
+    suite — so solving the task must not turn it red."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    if os.environ.get("NANOLOOP_META_TEST") == "1":
+        return  # running inside its own copy
+
+    root = Path(__file__).parent.parent
+    work = tmp_path / "solved"
+    shutil.copytree(
+        root, work, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".ruff_cache")
+    )
+    (work / "target.py").write_text(
+        "from qiskit import QuantumCircuit\n\n\n"
+        "def build() -> QuantumCircuit:\n"
+        "    qc = QuantumCircuit(2)\n"
+        "    qc.h(0)\n"
+        "    qc.rz(0.7, 0)\n"
+        "    qc.cx(0, 1)\n"
+        "    return qc\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q"],
+        cwd=str(work),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env={**os.environ, "NANOLOOP_META_TEST": "1"},
+    )
+    assert proc.returncode == 0, f"optimising target.py turns the suite red:\n{proc.stdout[-1500:]}"
 
 
 def test_an_empty_circuit_is_cheap_and_wrong():

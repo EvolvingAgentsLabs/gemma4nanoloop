@@ -72,25 +72,30 @@ model cannot do a task, rule out that the prompt cannot.
 
 Run end to end with `run --optimize` against both backends:
 
-| model | when | result | optimum |
-|---|---|---|---|
-| `gemma-4-26b` (cloud) | old metric (gate count) | **10 → 3** gates, matching the transpiler | 3 |
-| `gemma4:12b` (local) | old metric (gate count) | **10 → 7** gates, then plateaus | 3 |
-| `gemma4:12b` (local) | **cost, re-measured** | **0 of 4 candidates valid**, cost 37 → 37 | 12 |
+| model | metric | result |
+|---|---|---|
+| `gemma-4-26b` (cloud) | gate count | **10 → 3** gates, matched the transpiler |
+| `gemma4:12b` (local) | gate count | **10 → 7** gates, then plateaus |
+| `gemma4:12b` (local) | **cost, re-measured** | **cost 37 → 12, matched the transpiler** — 6 model calls, 111 s |
 
-The last row is today, 2 generations × 2 candidates, 53 s. Every candidate came
-back `unitary changed` — worse than the plateau the row above describes, which
-at least produced correct-but-incomplete circuits.
+The last row is the current metric and the documented command
+(`--generations 3 --candidates 3`). It found the optimum on the sixth candidate:
+five came back `unitary changed`, then one landed exactly on `rz(0.7)`.
 
-Same caveat as the sibling example, and for the same reason (trap 9 in
-`NEXT-STEPS.md`): the metric changed underneath these numbers, so the first two
-rows are in gate count and the third in cost, and they are not directly
-comparable. What is comparable is the verdict — **matched** vs **did not
-match** — and on that the ordering is unchanged.
+The metric changed underneath the first two rows (gate count → arity-weighted
+cost), so those numbers are not directly comparable to the third — trap 9 in
+`NEXT-STEPS.md`. The verdict is: **matched**.
 
-The machinery, at least, does what it should: the run printed
-`nothing beat the starting circuit; best.py left untouched`, which is the guard
-that stops a failed run from overwriting the committed result.
+### And a smaller correction, worth keeping
+
+The first re-measurement reported **0 of 4 candidates valid** and was written up
+as the 12B doing worse than before. It had been run at
+`--generations 2 --candidates 2` — a smaller search than the command this README
+documents — and then compared against numbers produced by the larger one. The
+model was not worse; it was given four samples instead of nine on a task whose
+whole point is that finding the commutation takes more than one try.
+
+Read `--candidates` as part of the measurement, not as a convenience knob.
 
 The 12B removed the redundant `h` gates and left `cx x3` and `x x2` untouched.
 Correct — the unitary is preserved — but incomplete. Run twice more, no
